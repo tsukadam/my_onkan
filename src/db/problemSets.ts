@@ -5,7 +5,6 @@ export type DbQuestion = {
 
 export type DbProblemSet = {
   title: string
-  bpm?: number
   questions: DbQuestion[]
   createdAt: number
   updatedAt: number
@@ -74,12 +73,11 @@ export async function getProblemSet(title: string): Promise<DbProblemSet | null>
   return row ?? null
 }
 
-export async function putProblemSet(input: { title: string; bpm?: number; questions: DbQuestion[] }): Promise<void> {
+export async function putProblemSet(input: { title: string; questions: DbQuestion[] }): Promise<void> {
   const now = Date.now()
   const existing = await getProblemSet(input.title)
   const row: DbProblemSet = {
     title: input.title,
-    bpm: input.bpm,
     questions: input.questions,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -114,7 +112,7 @@ export async function listAllProblemSets(): Promise<DbProblemSet[]> {
 }
 
 export async function replaceAllProblemSets(
-  rows: Array<{ title: string; bpm?: number; questions: DbQuestion[] }>,
+  rows: Array<{ title: string; questions: DbQuestion[] }>,
 ): Promise<void> {
   const now = Date.now()
   const db = await openDb()
@@ -124,7 +122,6 @@ export async function replaceAllProblemSets(
   for (const row of rows) {
     store.put({
       title: row.title,
-      bpm: row.bpm,
       questions: row.questions,
       createdAt: now,
       updatedAt: now,

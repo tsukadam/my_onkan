@@ -1,73 +1,44 @@
-# React + TypeScript + Vite
+# MyOnkan
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+相対音感トレーニング用のWebアプリです。  
+ブラウザ上でメロディを聴き、鍵盤で回答する形式の練習ができます。
 
-Currently, two official plugins are available:
+## 主な機能
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- 2オクターブ鍵盤（C3-C5）で入力
+- 問題セット出題 / ランダムメロディ出題
+- 開始音・最終音・音数・出題数の設定
+- 問題セット編集（IndexedDBに保存）
+- 問題セットのインポート / エクスポート（JSON）
+- 累計正答率の表示
 
-## React Compiler
+## 開発環境
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Node.js 20 以上推奨
+- npm
 
-## Expanding the ESLint configuration
+## ローカル起動
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## ビルド
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run build
 ```
+
+## デプロイ（GitHub Pages）
+
+このリポジトリでは、`main` への push をトリガーに GitHub Actions で Pages へ自動デプロイします。
+
+初回のみ、GitHubリポジトリ設定で以下を確認してください。
+
+1. `Settings` -> `Pages`
+2. `Build and deployment` を `GitHub Actions` に設定
+
+公開URL（想定）:
+
+- [https://tsukadam.github.io/my_onkan/](https://tsukadam.github.io/my_onkan/)

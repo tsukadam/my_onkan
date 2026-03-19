@@ -167,7 +167,6 @@ function App() {
           id: `user:${full.title}`,
           title: full.title,
           filename: 'IndexedDB',
-          bpm: full.bpm ?? 80,
         },
         questions,
       })
@@ -218,7 +217,7 @@ function App() {
     }
 
     const questions = parsed.validLines.map((text, idx) => ({ id: idx + 1, text }))
-    await putProblemSet({ title, bpm: 80, questions })
+    await putProblemSet({ title, questions })
     await refreshUserSets()
 
     const ignored = parsed.ignoredLines.length
@@ -248,7 +247,6 @@ function App() {
       exportedAt: new Date().toISOString(),
       problemSets: rows.map((r) => ({
         title: r.title,
-        bpm: r.bpm ?? 80,
         questions: [...r.questions].sort((a, b) => a.id - b.id),
       })),
     }
@@ -274,16 +272,14 @@ function App() {
       version?: number
       problemSets?: Array<{
         title?: unknown
-        bpm?: unknown
         questions?: Array<{ id?: unknown; text?: unknown }>
       }>
     }
     const input = Array.isArray(raw.problemSets) ? raw.problemSets : []
-    const normalized: Array<{ title: string; bpm?: number; questions: Array<{ id: number; text: string }> }> = []
+    const normalized: Array<{ title: string; questions: Array<{ id: number; text: string }> }> = []
     for (const s of input) {
       const title = typeof s.title === 'string' ? s.title.trim() : ''
       if (!title) continue
-      const bpm = typeof s.bpm === 'number' ? s.bpm : 80
       const questions = Array.isArray(s.questions)
         ? s.questions
             .map((q, idx) => {
@@ -296,7 +292,7 @@ function App() {
             .map((q, idx) => ({ id: idx + 1, text: q.text }))
         : []
       if (questions.length === 0) continue
-      normalized.push({ title, bpm, questions })
+      normalized.push({ title, questions })
     }
     if (normalized.length === 0) {
       window.alert('有効な問題セットが見つかりませんでした。')
@@ -473,7 +469,6 @@ function App() {
         return {
           raw: normalizedToKatakana(pcs),
           setId: 'random',
-          bpm: tempoBpm,
           steps: steps as any,
           normalizedNotes: pcs,
         }

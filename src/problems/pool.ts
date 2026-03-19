@@ -6,7 +6,6 @@ import type { ProblemSet } from './registry'
 export type PoolItem = {
   raw: string
   setId: string
-  bpm: number
   steps: ParsedStep[]
   normalizedNotes: number[]
 }
@@ -51,7 +50,6 @@ export function buildPool(
       out.push({
         raw,
         setId: set.meta.id,
-        bpm: set.meta.bpm ?? 80,
         steps: parsed.steps,
         normalizedNotes: norm.notes,
       })
