@@ -104,6 +104,17 @@ function App() {
     | { kind: 'finished' }
   >({ kind: 'idle' })
 
+  const [view, setView] = useState<'game' | 'user'>('game')
+  const [problemSettingsOpen, setProblemSettingsOpen] = useState(true)
+
+  // タブの折りたたみ状態:
+  // - 初期（idle）は展開固定
+  // - 出題中/リザルト（finished含む）は折りたたみ（必要ならタブ押下で開閉）
+  useEffect(() => {
+    if (quizState.kind === 'idle') setProblemSettingsOpen(true)
+    if (quizState.kind === 'finished') setProblemSettingsOpen(false)
+  }, [quizState.kind])
+
   const [cycleQueue, setCycleQueue] = useState<number[]>([])
   const [cyclePos, setCyclePos] = useState(0)
   const [presentCount, setPresentCount] = useState(0)
@@ -643,219 +654,277 @@ function App() {
     ],
   )
 
-  const audioReady = engine.status.kind === 'ready'
-
   return (
-    <div className="app">
+    <div className={`app ${view === 'user' ? 'viewUser' : ''}`}>
       <header className="header">
         <div className="title">
-          <h1>MyOnkan 相対音感</h1>
-          <p>音が鳴らない時は鍵盤を１回押す</p>
+          <h1>MyOnkan</h1>
         </div>
-        <div className="status">
-          <label className="keySelect">
-            <span>出題間隔</span>
-            <select
-              value={questionIntervalSec}
-              onChange={(e) => setQuestionIntervalSec(Number(e.target.value) as 2 | 3 | 4 | 5)}
-            >
-              <option value={2}>2秒</option>
-              <option value={3}>3秒</option>
-              <option value={4}>4秒</option>
-              <option value={5}>5秒</option>
-            </select>
-          </label>
-          <label className="keySelect">
-            <span>現在のキー</span>
-            <select
-              value={currentKey}
-              onChange={(e) =>
-                setCurrentKey(e.target.value as (typeof KEY_OPTIONS)[number]['id'])
-              }
-            >
-              {KEY_OPTIONS.map((k) => (
-                <option key={k.id} value={k.id}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="keySelect">
-            <span>テンポ</span>
-            <select
-              value={tempoBpm}
-              onChange={(e) => setTempoBpm(Number(e.target.value) as 50 | 60 | 70 | 80 | 90 | 100 | 110 | 120)}
-            >
-              <option value={50}>50</option>
-              <option value={60}>60</option>
-              <option value={70}>70</option>
-              <option value={80}>80</option>
-              <option value={90}>90</option>
-              <option value={100}>100</option>
-              <option value={110}>110</option>
-              <option value={120}>120</option>
-            </select>
-          </label>
-          <span className={`pill ${audioReady ? 'on' : 'off'}`}>
-            Audio: {audioReady ? 'Ready' : 'Tap to enable'}
-          </span>
+        <div className="headerBtns">
+          <button
+            type="button"
+            className="homeBtn"
+            onClick={() => setView('game')}
+            aria-label="Home"
+          >
+            ⌂
+          </button>
+          <button
+            type="button"
+            className="gearBtn"
+            onClick={() => setView((v) => (v === 'user' ? 'game' : 'user'))}
+            aria-label="Settings"
+          >
+            ⚙
+          </button>
         </div>
       </header>
 
       <main className="main">
         <section className="panel">
+          <div className="userSettingsPanel">
+            <div className="settingsRow">
+              <label className="keySelect">
+                <span>出題間隔</span>
+                <select
+                  value={questionIntervalSec}
+                  onChange={(e) =>
+                    setQuestionIntervalSec(
+                      Number(e.target.value) as 2 | 3 | 4 | 5,
+                    )
+                  }
+                >
+                  <option value={2}>2秒</option>
+                  <option value={3}>3秒</option>
+                  <option value={4}>4秒</option>
+                  <option value={5}>5秒</option>
+                </select>
+              </label>
+              <label className="keySelect">
+                <span>現在のキー</span>
+                <select
+                  value={currentKey}
+                  onChange={(e) =>
+                    setCurrentKey(
+                      e.target.value as (typeof KEY_OPTIONS)[number]['id'],
+                    )
+                  }
+                >
+                  {KEY_OPTIONS.map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="keySelect">
+                <span>テンポ</span>
+                <select
+                  value={tempoBpm}
+                  onChange={(e) =>
+                    setTempoBpm(
+                      Number(e.target.value) as
+                        | 50
+                        | 60
+                        | 70
+                        | 80
+                        | 90
+                        | 100
+                        | 110
+                        | 120,
+                    )
+                  }
+                >
+                  <option value={50}>50</option>
+                  <option value={60}>60</option>
+                  <option value={70}>70</option>
+                  <option value={80}>80</option>
+                  <option value={90}>90</option>
+                  <option value={100}>100</option>
+                  <option value={110}>110</option>
+                  <option value={120}>120</option>
+                </select>
+              </label>
+            </div>
+          </div>
           <div className="settings">
-            <h2>出題設定</h2>
-            <div className="settingsRow">
-              <label className="radio">
-                <input
-                  type="radio"
-                  name="mode"
-                  checked={!randomMode}
-                  onChange={() => setRandomMode(false)}
-                />
-                <span>問題セットからランダム出題</span>
-              </label>
-              <label className="radio">
-                <input
-                  type="radio"
-                  name="mode"
-                  checked={randomMode}
-                  onChange={() => setRandomMode(true)}
-                />
-                <span>ランダムメロディ出題</span>
-              </label>
-            </div>
-            {!randomMode && (
-              <div className="settingsRow">
-                <label className="keySelect">
-                  <span>問題セット</span>
-                  <select value={fileFilter} onChange={(e) => setFileFilter(e.target.value)}>
-                    <option value="">指定なし</option>
-                    {allProblemSets.map((p) => (
-                      <option key={p.meta.id} value={p.meta.id}>
-                        {p.meta.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            )}
-            <div className="settingsRow">
-              <label className="keySelect">
-                <span>開始音</span>
-                <select
-                  value={startPcFilter}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setStartPcFilter(v === '' ? '' : Number(v))
-                  }}
-                >
-                  <option value="">指定なし</option>
-                  <option value={0}>ド</option>
-                  <option value={1}>デ</option>
-                  <option value={2}>レ</option>
-                  <option value={3}>リ</option>
-                  <option value={4}>ミ</option>
-                  <option value={5}>ファ</option>
-                  <option value={6}>フィ</option>
-                  <option value={7}>ソ</option>
-                  <option value={8}>サ</option>
-                  <option value={9}>ラ</option>
-                  <option value={10}>チ</option>
-                  <option value={11}>シ</option>
-                </select>
-              </label>
-              <label className="keySelect">
-                <span>最終音</span>
-                <select
-                  value={lastPcFilter}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setLastPcFilter(v === '' ? '' : Number(v))
-                  }}
-                >
-                  <option value="">指定なし</option>
-                  <option value={0}>ド</option>
-                  <option value={1}>デ</option>
-                  <option value={2}>レ</option>
-                  <option value={3}>リ</option>
-                  <option value={4}>ミ</option>
-                  <option value={5}>ファ</option>
-                  <option value={6}>フィ</option>
-                  <option value={7}>ソ</option>
-                  <option value={8}>サ</option>
-                  <option value={9}>ラ</option>
-                  <option value={10}>チ</option>
-                  <option value={11}>シ</option>
-                </select>
-              </label>
-            </div>
-            {randomMode && (
-              <div className="settingsRow">
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={randomNoBlack}
-                    onChange={(e) => setRandomNoBlack(e.target.checked)}
-                  />
-                  <span>白鍵のみ</span>
-                </label>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={randomLimitLeap}
-                    onChange={(e) => setRandomLimitLeap(e.target.checked)}
-                  />
-                  <span>跳躍をオクターブ以下に固定</span>
-                </label>
-              </div>
-            )}
-            <div className="settingsRow">
-              <label className="keySelect">
-                <span>音数</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={6}
-                  value={noteCountFilter}
-                  onChange={(e) => setNoteCountFilter(Number(e.target.value))}
-                  className="countBar"
-                />
-              </label>
-              <span className="countLabel">{noteCountFilter}音</span>
-            </div>
-            <div className="settingsRow">
-              <label className="keySelect">
-                <span>出題数</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={randomMode ? 15 : Math.max(1, poolSize)}
-                  value={effectiveQuestionCount}
-                  onChange={(e) => setQuestionCount(Number(e.target.value))}
-                  disabled={!canStart}
-                  className="countBar"
-                />
-              </label>
-              <span className="countLabel">
-                {randomMode
-                  ? `${effectiveQuestionCount}問 / 15問`
-                  : `${poolSize === 0 ? '0' : effectiveQuestionCount}問${poolSize > 0 ? ` / ${poolSize}問` : ''}`}
-              </span>
-            </div>
-            <div className="settingsRow">
+            <div className="modeTabs" role="tablist" aria-label="mode">
               <button
                 type="button"
-                className="startBtn"
-                onClick={handleStart}
-                disabled={!canStart}
+                className={`modeTab ${!randomMode ? 'active' : ''}`}
+                onClick={() => {
+                  setRandomMode(false)
+                  if (quizState.kind === 'idle') {
+                    setProblemSettingsOpen(true)
+                  } else {
+                    setProblemSettingsOpen((v) => !v)
+                  }
+                }}
+                role="tab"
+                aria-selected={!randomMode}
               >
-                {quizState.kind !== 'idle' && quizState.kind !== 'finished'
-                  ? '中断して再スタート'
-                  : 'スタート'}
+                問題セットから出題
+              </button>
+              <button
+                type="button"
+                className={`modeTab ${randomMode ? 'active' : ''}`}
+                onClick={() => {
+                  setRandomMode(true)
+                  if (quizState.kind === 'idle') {
+                    setProblemSettingsOpen(true)
+                  } else {
+                    setProblemSettingsOpen((v) => !v)
+                  }
+                }}
+                role="tab"
+                aria-selected={randomMode}
+              >
+                ランダムメロディ出題
               </button>
             </div>
+
+            {problemSettingsOpen && (
+              <>
+                {!randomMode && (
+                  <div className="settingsRow">
+                    <label className="keySelect">
+                      <span>問題セット</span>
+                      <select value={fileFilter} onChange={(e) => setFileFilter(e.target.value)}>
+                        <option value="">指定なし</option>
+                        {allProblemSets.map((p) => (
+                          <option key={p.meta.id} value={p.meta.id}>
+                            {p.meta.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+
+                <div className="settingsRow">
+                  <label className="keySelect">
+                    <span>開始音</span>
+                    <select
+                      value={startPcFilter}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setStartPcFilter(v === '' ? '' : Number(v))
+                      }}
+                    >
+                      <option value="">指定なし</option>
+                      <option value={0}>ド</option>
+                      <option value={1}>デ</option>
+                      <option value={2}>レ</option>
+                      <option value={3}>リ</option>
+                      <option value={4}>ミ</option>
+                      <option value={5}>ファ</option>
+                      <option value={6}>フィ</option>
+                      <option value={7}>ソ</option>
+                      <option value={8}>サ</option>
+                      <option value={9}>ラ</option>
+                      <option value={10}>チ</option>
+                      <option value={11}>シ</option>
+                    </select>
+                  </label>
+                  <label className="keySelect">
+                    <span>最終音</span>
+                    <select
+                      value={lastPcFilter}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setLastPcFilter(v === '' ? '' : Number(v))
+                      }}
+                    >
+                      <option value="">指定なし</option>
+                      <option value={0}>ド</option>
+                      <option value={1}>デ</option>
+                      <option value={2}>レ</option>
+                      <option value={3}>リ</option>
+                      <option value={4}>ミ</option>
+                      <option value={5}>ファ</option>
+                      <option value={6}>フィ</option>
+                      <option value={7}>ソ</option>
+                      <option value={8}>サ</option>
+                      <option value={9}>ラ</option>
+                      <option value={10}>チ</option>
+                      <option value={11}>シ</option>
+                    </select>
+                  </label>
+                </div>
+
+                {randomMode && (
+                  <div className="settingsRow">
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={randomNoBlack}
+                        onChange={(e) => setRandomNoBlack(e.target.checked)}
+                      />
+                      <span>白鍵のみ</span>
+                    </label>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={randomLimitLeap}
+                        onChange={(e) => setRandomLimitLeap(e.target.checked)}
+                      />
+                      <span>跳躍をオクターブ以下に固定</span>
+                    </label>
+                  </div>
+                )}
+
+                <div className="settingsRow">
+                  <label className="keySelect">
+                    <span>音数</span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={6}
+                      value={noteCountFilter}
+                      onChange={(e) => setNoteCountFilter(Number(e.target.value))}
+                      className="countBar"
+                    />
+                  </label>
+                  <span className="countLabel">{noteCountFilter}音</span>
+                </div>
+
+                <div className="settingsRow">
+                  <label className="keySelect">
+                    <span>出題数</span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={randomMode ? 15 : Math.max(1, poolSize)}
+                      value={effectiveQuestionCount}
+                      onChange={(e) => setQuestionCount(Number(e.target.value))}
+                      disabled={!canStart}
+                      className="countBar"
+                    />
+                  </label>
+                  <span className="countLabel">
+                    {randomMode
+                      ? `${effectiveQuestionCount}問 / 15問`
+                      : `${poolSize === 0 ? '0' : effectiveQuestionCount}問${poolSize > 0 ? ` / ${poolSize}問` : ''}`}
+                  </span>
+                </div>
+
+                <div className="settingsRow">
+                  <button
+                    type="button"
+                    className="startBtn"
+                    onClick={() => {
+                      setProblemSettingsOpen(false)
+                      handleStart()
+                    }}
+                    disabled={!canStart}
+                  >
+                    {quizState.kind !== 'idle' && quizState.kind !== 'finished'
+                      ? '中断して再スタート'
+                      : 'スタート'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="qCount">

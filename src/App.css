@@ -17,14 +17,14 @@
 }
 
 .title h1 {
-  font-size: 28px;
+  font-size: 18px;
   margin: 0;
 }
 
-.title p {
-  margin: 6px 0 0;
+.subtitle {
+  margin-top: 4px;
+  font-size: 13px;
   color: var(--text);
-  font-size: 14px;
 }
 
 .title {
@@ -116,6 +116,130 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.02);
+}
+
+.gearBtn {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sans);
+  font-weight: 600;
+}
+
+.gearBtn:hover {
+  filter: brightness(0.98);
+}
+
+.gearBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.homeBtn {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sans);
+  font-weight: 600;
+  transform: translateY(-2px);
+}
+
+.homeBtn:hover {
+  filter: brightness(0.98);
+}
+
+.homeBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.headerBtns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (min-width: 520px) {
+  .headerBtns {
+    gap: 18px;
+  }
+}
+
+.modeTabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.modeTab {
+  font: 14px/1.2 var(--sans);
+  padding: 10px 12px;
+  border-radius: 12px 12px 0 0;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  background: rgba(0, 0, 0, 0.02);
+  color: var(--text-h);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.modeTab.active {
+  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(168, 85, 247, 0.14);
+}
+
+.globalSettings {
+  padding: 8px 0 2px;
+  margin-bottom: 8px;
+}
+
+.userSettingsPanel {
+  display: none;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.viewUser .userSettingsPanel {
+  display: block;
+}
+
+.viewUser .settings,
+.viewUser .qCount,
+.viewUser .io,
+.viewUser .keyboardScroll,
+.viewUser .logs,
+.viewUser .editorWrap,
+.viewUser .footerLinks {
+  display: none;
 }
 
 .settingsRow {
