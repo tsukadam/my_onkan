@@ -14,7 +14,7 @@ export type ParseResult =
 
 // Minimal starter mapping. Expand this table to match your exact 西塚式（カナで半音）ルール.
 // Current test set only uses: ド/レ/ミ/ソ + 伸ばし/休符
-const NOTE_TOKENS: Array<{ token: string; semitone: number }> = [
+export const NOTE_TOKENS: Array<{ token: string; semitone: number }> = [
   { token: 'ド', semitone: 0 },
   { token: 'レ', semitone: 2 },
   { token: 'ミ', semitone: 4 },

@@ -51,8 +51,9 @@
 }
 
 #root {
-  width: 1126px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 1126px;
+  min-width: min(100px, 100vw);
   margin: 0 auto;
   text-align: center;
   border-inline: 1px solid var(--border);
@@ -64,6 +65,7 @@
 
 body {
   margin: 0;
+  overflow-x: clip;
 }
 
 h1,

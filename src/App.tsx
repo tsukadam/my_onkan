@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
 import { getAudioEngine } from './audio/engine'
-import { problemSets as builtInProblemSets, type ProblemSet } from './problems/registry'
+import type { ProblemSet } from './problems/registry'
 import { buildPool, shufflePool, type PoolItem } from './problems/pool'
 import { normalizedToKatakana } from './problem/normalize'
 import { bumpStats, type StatsStore } from './stats/storage'
@@ -15,7 +15,10 @@ import {
   replaceAllProblemSets,
 } from './db/problemSets'
 import { formatProblemSetToEditorText, parseEditorTextToQuestions } from './db/editorText'
+import { buildChordPickPoolFromEditorText } from './problem/chordPick'
 import './App.css'
+
+type QuizMode = 'free' | 'random' | 'chordPick'
 
 type PianoKey = {
   note: string
@@ -86,14 +89,18 @@ function App() {
   const [activeNotes, setActiveNotes] = useState<Set<string>>(() => new Set())
   const [currentKey, setCurrentKey] =
     useState<(typeof KEY_OPTIONS)[number]['id']>('C')
-  const [fileFilter, setFileFilter] = useState<string>('')
+  const [quizInlineText, setQuizInlineText] = useState('')
+  const [freeInputHelpOpen, setFreeInputHelpOpen] = useState(false)
+  const [randomFiltersOpen, setRandomFiltersOpen] = useState(false)
   const [noteCountFilter, setNoteCountFilter] = useState<number>(3)
   const [startPcFilter, setStartPcFilter] = useState<number | ''>('')
   const [lastPcFilter, setLastPcFilter] = useState<number | ''>('')
-  const [randomMode, setRandomMode] = useState(false)
+  const [quizMode, setQuizMode] = useState<QuizMode>('free')
+  const [chordPickText, setChordPickText] = useState('')
+  const [chordPickHelpOpen, setChordPickHelpOpen] = useState(false)
   const [randomNoBlack, setRandomNoBlack] = useState(true)
   const [randomLimitLeap, setRandomLimitLeap] = useState(true)
-  const [questionCount, setQuestionCount] = useState<number>(5)
+  const [questionCount, setQuestionCount] = useState<number>(10)
   const [questionIntervalSec, setQuestionIntervalSec] = useState<2 | 3 | 4 | 5>(2)
   const [tempoBpm, setTempoBpm] = useState<50 | 60 | 70 | 80 | 90 | 100 | 110 | 120>(80)
   const [quizState, setQuizState] = useState<
@@ -106,6 +113,11 @@ function App() {
 
   const [view, setView] = useState<'game' | 'user'>('game')
   const [problemSettingsOpen, setProblemSettingsOpen] = useState(true)
+  /** 結果直後だけ true。タブ・設定編集・モード切替で false → 主ボタンは「スタート」 */
+  const [resultFreshForAgainStart, setResultFreshForAgainStart] = useState(true)
+  const prevQuizModeRef = useRef<QuizMode>('free')
+  /** 構成音モードで「入室時の出題数デフォルト」を一度だけ適用したか */
+  const chordPickDefaultsAppliedRef = useRef(false)
 
   // タブの折りたたみ状態:
   // - 初期（idle）は展開固定
@@ -113,6 +125,10 @@ function App() {
   useEffect(() => {
     if (quizState.kind === 'idle') setProblemSettingsOpen(true)
     if (quizState.kind === 'finished') setProblemSettingsOpen(false)
+  }, [quizState.kind])
+
+  useEffect(() => {
+    if (quizState.kind === 'finished') setResultFreshForAgainStart(true)
   }, [quizState.kind])
 
   const [cycleQueue, setCycleQueue] = useState<number[]>([])
@@ -145,7 +161,7 @@ function App() {
   const [userProblemSets, setUserProblemSets] = useState<ProblemSet[]>([])
 
   // Editor UI state
-  const [editorOpen, setEditorOpen] = useState(false)
+  const [showEditorInUserSettings, setShowEditorInUserSettings] = useState(false)
   const [editorSelectedTitle, setEditorSelectedTitle] = useState<string>('__new__')
   const [editorTitle, setEditorTitle] = useState('')
   const [editorBody, setEditorBody] = useState('')
@@ -155,8 +171,8 @@ function App() {
     () =>
       [
         '使用可能文字: ドデレリミファフィソサラチシ',
-        'オクターブ違いの同名音については、直前の音に最も近い音が選ばれます。',
-        '音名の前に↑か↓をつけると、そこからオクターブを上下できます。',
+        'オクターブ違いの同名音は、直前の音に最も近い音が選ばれます。',
+        '音名の前に↑や↓をつけるとオクターブを上下できます。',
         ' ',
         '全角/半角スペースで休符',
         '伸ばし棒（ー）で音値を伸ばす',
@@ -164,7 +180,16 @@ function App() {
     [],
   )
 
-  const allProblemSets = useMemo(() => [...builtInProblemSets, ...userProblemSets], [userProblemSets])
+  const freeInputHelpDetail = useMemo(
+    () =>
+      [
+        'オクターブ違いの同名音は、直前の音に最も近い音が選ばれます。',
+        '音名の前にやか↓をつけるとオクターブを上下できます。',
+        '全角/半角スペースで休符',
+        '伸ばし棒（ー）で音値を伸ばす',
+      ].join('\n'),
+    [],
+  )
 
   const refreshUserSets = useCallback(async () => {
     const list = await listProblemSets()
@@ -346,26 +371,78 @@ function App() {
   }, [])
 
   const pool = useMemo(() => {
-    const nc = noteCountFilter
-    const start = startPcFilter === '' ? null : startPcFilter
-    const last = lastPcFilter === '' ? null : lastPcFilter
-    return buildPool(allProblemSets, fileFilter, nc, start, last)
-  }, [allProblemSets, fileFilter, lastPcFilter, noteCountFilter, startPcFilter])
+    if (quizMode !== 'free') return []
+    const { validLines } = parseEditorTextToQuestions(quizInlineText)
+    const synthetic: ProblemSet = {
+      meta: { id: 'inline', title: 'inline', filename: 'inline' },
+      questions: validLines,
+    }
+    return buildPool([synthetic], 'inline', null, null, null)
+  }, [quizMode, quizInlineText])
+
+  const chordPickPool = useMemo(
+    () => (quizMode === 'chordPick' ? buildChordPickPoolFromEditorText(chordPickText) : []),
+    [quizMode, chordPickText],
+  )
 
   const poolSize = pool.length
-  const effectiveQuestionCount = randomMode
-    ? Math.min(Math.max(1, questionCount), 15)
-    : Math.min(Math.max(1, questionCount), Math.max(1, poolSize))
-  const canStart = randomMode ? true : poolSize > 0
+  const chordPickPoolSize = chordPickPool.length
+
+  const questionCountMax =
+    quizMode === 'random' ? 15 : quizMode === 'chordPick' ? Math.max(1, chordPickPoolSize || 1) : 15
+
+  const effectiveQuestionCount =
+    quizMode === 'random'
+      ? Math.min(Math.max(1, questionCount), 15)
+      : quizMode === 'chordPick'
+        ? chordPickPoolSize === 0
+          ? 1
+          : Math.min(Math.max(1, questionCount), chordPickPoolSize)
+        : poolSize
+
+  const canStart =
+    quizMode === 'random' ? true : quizMode === 'free' ? poolSize > 0 : chordPickPoolSize > 0
+
+  const primaryStartLabel =
+    quizState.kind === 'finished'
+      ? resultFreshForAgainStart
+        ? 'もう一度スタート'
+        : 'スタート'
+      : quizState.kind !== 'idle'
+        ? '中断して再スタート'
+        : 'スタート'
 
   useEffect(() => {
-    if (randomMode) {
+    if (quizMode === 'random') {
       setQuestionCount((c) => Math.min(Math.max(1, c), 15))
+    }
+  }, [quizMode])
+
+  useEffect(() => {
+    if (quizMode === 'chordPick' && prevQuizModeRef.current !== 'chordPick') {
+      chordPickDefaultsAppliedRef.current = false
+    }
+    prevQuizModeRef.current = quizMode
+  }, [quizMode])
+
+  useEffect(() => {
+    if (quizMode !== 'chordPick') return
+    if (chordPickPoolSize === 0) return
+    const max = chordPickPoolSize
+    const defaultCount = max <= 10 ? max : 10
+
+    if (!chordPickDefaultsAppliedRef.current) {
+      chordPickDefaultsAppliedRef.current = true
+      setQuestionCount(defaultCount)
       return
     }
-    if (poolSize > 0) setQuestionCount(poolSize)
-    else setQuestionCount(1)
-  }, [poolSize, randomMode])
+
+    setQuestionCount((prev) => {
+      const clamped = Math.min(prev, max)
+      if (max <= 10) return max
+      return Math.max(1, clamped)
+    })
+  }, [quizMode, chordPickPoolSize])
 
   const pickQuestionAt = useCallback((pos: number, queue: number[]) => {
     const items = currentPoolRef.current
@@ -440,7 +517,7 @@ function App() {
     if (!canStart) return
 
     let slice: PoolItem[]
-    if (randomMode) {
+    if (quizMode === 'random') {
       const makeRandomQuestion = (): PoolItem => {
         const noteCount = noteCountFilter
         const pcs: number[] = []
@@ -486,9 +563,20 @@ function App() {
       }
 
       slice = Array.from({ length: effectiveQuestionCount }, makeRandomQuestion)
+    } else if (quizMode === 'chordPick') {
+      const built = buildChordPickPoolFromEditorText(chordPickText)
+      if (built.length === 0) return
+      const take = Math.min(Math.max(1, questionCount), built.length)
+      slice = shufflePool(built).slice(0, take)
     } else {
-      const shuffled = shufflePool(pool)
-      slice = shuffled.slice(0, effectiveQuestionCount)
+      const { validLines } = parseEditorTextToQuestions(quizInlineText)
+      const synthetic: ProblemSet = {
+        meta: { id: 'inline', title: 'inline', filename: 'inline' },
+        questions: validLines,
+      }
+      const built = buildPool([synthetic], 'inline', null, null, null)
+      if (built.length === 0) return
+      slice = shufflePool(built)
     }
 
     currentPoolRef.current = slice
@@ -504,15 +592,16 @@ function App() {
   }, [
     canStart,
     effectiveQuestionCount,
-    fileFilter,
     lastPcFilter,
     noteCountFilter,
-    startPcFilter,
-    pool,
+    quizInlineText,
+    questionCount,
     randomLimitLeap,
     randomNoBlack,
-    randomMode,
+    chordPickText,
+    quizMode,
     startCurrentQuestion,
+    startPcFilter,
     tempoBpm,
   ])
 
@@ -746,169 +835,416 @@ function App() {
                 </select>
               </label>
             </div>
+            <div className="settingsRow globalSettings">
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={showEditorInUserSettings}
+                  onChange={(e) => setShowEditorInUserSettings(e.target.checked)}
+                />
+                <span>問題セット編集を表示</span>
+              </label>
+            </div>
+            {showEditorInUserSettings && (
+              <div className="editor userSettingsEditor">
+                <div className="editorRow">
+                  <label className="keySelect">
+                    <span>読み込み</span>
+                    <select
+                      value={editorSelectedTitle}
+                      onChange={(e) => void loadEditorSelection(e.target.value)}
+                    >
+                      <option value="__new__">新規作成</option>
+                      {userProblemSets.map((s) => (
+                        <option key={s.meta.title} value={s.meta.title}>
+                          {s.meta.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button type="button" className="startBtn" onClick={() => void handleEditorSave()}>
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    className="startBtn"
+                    onClick={() => void handleEditorDelete()}
+                    disabled={editorSelectedTitle === '__new__'}
+                  >
+                    削除
+                  </button>
+                </div>
+                <div className="editorRow">
+                  <label className="keySelect editorTitle">
+                    <span>タイトル</span>
+                    <input
+                      value={editorTitle}
+                      onChange={(e) => setEditorTitle(e.target.value)}
+                      placeholder="（空欄なら自動）"
+                    />
+                  </label>
+                </div>
+                <div className="editorRow">
+                  <label className="editorBody">
+                    <span>内容（1行=1問）</span>
+                    <textarea
+                      value={editorBody}
+                      onChange={(e) => setEditorBody(e.target.value)}
+                      rows={8}
+                    />
+                  </label>
+                  <div className="editorHelp">{editorNewHelp}</div>
+                </div>
+                <div className="editorRow">
+                  <button type="button" className="startBtn" onClick={() => void handleExportProblemSets()}>
+                    エクスポート
+                  </button>
+                  <button type="button" className="startBtn" onClick={() => importInputRef.current?.click()}>
+                    インポート
+                  </button>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept="application/json,.json"
+                    className="fileInputHidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      e.currentTarget.value = ''
+                      if (!file) return
+                      void handleImportProblemSets(file).catch(() => {
+                        window.alert('インポートに失敗しました。JSON形式を確認してください。')
+                      })
+                    }}
+                  />
+                </div>
+                <div className="editorRow">
+                  <div className="editorHelp">
+                    ブラウザ側で保存されている全ての問題セットをエクスポート/インポートできます。
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="settings">
+          <div className="quizGameControls">
             <div className="modeTabs" role="tablist" aria-label="mode">
               <button
                 type="button"
-                className={`modeTab ${!randomMode ? 'active' : ''}`}
+                className={`modeTab ${quizMode === 'free' ? 'active' : ''}`}
                 onClick={() => {
-                  setRandomMode(false)
-                  if (quizState.kind === 'idle') {
+                  if (quizState.kind === 'finished') {
+                    setResultFreshForAgainStart(false)
+                    setProblemSettingsOpen(true) // 結果用ボタン箱を出さない
+                  } else if (quizState.kind === 'idle') {
                     setProblemSettingsOpen(true)
                   } else {
                     setProblemSettingsOpen((v) => !v)
                   }
+                  setQuizMode('free')
                 }}
                 role="tab"
-                aria-selected={!randomMode}
+                aria-selected={quizMode === 'free'}
               >
-                問題セットから出題
+                自由入力
               </button>
               <button
                 type="button"
-                className={`modeTab ${randomMode ? 'active' : ''}`}
+                className={`modeTab ${quizMode === 'random' ? 'active' : ''}`}
                 onClick={() => {
-                  setRandomMode(true)
-                  if (quizState.kind === 'idle') {
+                  if (quizState.kind === 'finished') {
+                    setResultFreshForAgainStart(false)
+                    setProblemSettingsOpen(true) // 結果用ボタン箱を出さない
+                  } else if (quizState.kind === 'idle') {
                     setProblemSettingsOpen(true)
                   } else {
                     setProblemSettingsOpen((v) => !v)
                   }
+                  setQuizMode('random')
                 }}
                 role="tab"
-                aria-selected={randomMode}
+                aria-selected={quizMode === 'random'}
               >
-                ランダムメロディ出題
+                ランダムメロディ
+              </button>
+              <button
+                type="button"
+                className={`modeTab ${quizMode === 'chordPick' ? 'active' : ''}`}
+                onClick={() => {
+                  if (quizState.kind === 'finished') {
+                    setResultFreshForAgainStart(false)
+                    setProblemSettingsOpen(true)
+                  } else if (quizState.kind === 'idle') {
+                    setProblemSettingsOpen(true)
+                  } else {
+                    setProblemSettingsOpen((v) => !v)
+                  }
+                  setQuizMode('chordPick')
+                }}
+                role="tab"
+                aria-selected={quizMode === 'chordPick'}
+              >
+                構成音から生成
               </button>
             </div>
 
             {problemSettingsOpen && (
-              <>
-                {!randomMode && (
-                  <div className="settingsRow">
-                    <label className="keySelect">
-                      <span>問題セット</span>
-                      <select value={fileFilter} onChange={(e) => setFileFilter(e.target.value)}>
-                        <option value="">指定なし</option>
-                        {allProblemSets.map((p) => (
-                          <option key={p.meta.id} value={p.meta.id}>
-                            {p.meta.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
+              <div className="settings">
+                {quizMode === 'free' && (
+                  <>
+                    <div className="quizTextBlock">
+                      <label className="editorBody editorBodyNoLabel">
+                        <textarea
+                          value={quizInlineText}
+                          onChange={(e) => setQuizInlineText(e.target.value)}
+                          rows={5}
+                          placeholder={
+                            '入力された問題文をランダムに出題します。\n使用文字: ドデレリミファフィソサラチシ\n１行＝１問'
+                          }
+                          aria-label="問題テキスト（自由入力）"
+                        />
+                      </label>
+                    </div>
+                  </>
                 )}
 
-                <div className="settingsRow">
-                  <label className="keySelect">
-                    <span>開始音</span>
-                    <select
-                      value={startPcFilter}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setStartPcFilter(v === '' ? '' : Number(v))
-                      }}
-                    >
-                      <option value="">指定なし</option>
-                      <option value={0}>ド</option>
-                      <option value={1}>デ</option>
-                      <option value={2}>レ</option>
-                      <option value={3}>リ</option>
-                      <option value={4}>ミ</option>
-                      <option value={5}>ファ</option>
-                      <option value={6}>フィ</option>
-                      <option value={7}>ソ</option>
-                      <option value={8}>サ</option>
-                      <option value={9}>ラ</option>
-                      <option value={10}>チ</option>
-                      <option value={11}>シ</option>
-                    </select>
-                  </label>
-                  <label className="keySelect">
-                    <span>最終音</span>
-                    <select
-                      value={lastPcFilter}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setLastPcFilter(v === '' ? '' : Number(v))
-                      }}
-                    >
-                      <option value="">指定なし</option>
-                      <option value={0}>ド</option>
-                      <option value={1}>デ</option>
-                      <option value={2}>レ</option>
-                      <option value={3}>リ</option>
-                      <option value={4}>ミ</option>
-                      <option value={5}>ファ</option>
-                      <option value={6}>フィ</option>
-                      <option value={7}>ソ</option>
-                      <option value={8}>サ</option>
-                      <option value={9}>ラ</option>
-                      <option value={10}>チ</option>
-                      <option value={11}>シ</option>
-                    </select>
-                  </label>
-                </div>
-
-                {randomMode && (
-                  <div className="settingsRow">
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={randomNoBlack}
-                        onChange={(e) => setRandomNoBlack(e.target.checked)}
-                      />
-                      <span>白鍵のみ</span>
-                    </label>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={randomLimitLeap}
-                        onChange={(e) => setRandomLimitLeap(e.target.checked)}
-                      />
-                      <span>跳躍をオクターブ以下に固定</span>
-                    </label>
-                  </div>
+                {quizMode === 'chordPick' && (
+                  <>
+                    <div className="quizTextBlock">
+                      <label className="editorBody editorBodyNoLabel">
+                        <textarea
+                          value={chordPickText}
+                          onChange={(e) => setChordPickText(e.target.value)}
+                          rows={2}
+                          placeholder={
+                            '入力した構成音の順番を入れ替えて、全パターン出題します。（含む転回形）'
+                          }
+                          aria-label="問題テキスト（構成音）"
+                        />
+                      </label>
+                    </div>
+                    <div className="settingsRow questionCountRow chordPickCountRow">
+                      <label className="keySelect chordPickCountLabel">
+                        <span className="chordPickCountTitle">出題数</span>
+                        <input
+                          type="range"
+                          className="chordPickCountBar countBar"
+                          min={1}
+                          max={Math.max(1, chordPickPoolSize)}
+                          value={
+                            chordPickPoolSize === 0
+                              ? 1
+                              : Math.min(questionCount, chordPickPoolSize)
+                          }
+                          onChange={(e) =>
+                            setQuestionCount(
+                              Math.min(
+                                chordPickPoolSize,
+                                Math.max(1, Number(e.target.value)),
+                              ),
+                            )
+                          }
+                          disabled={chordPickPoolSize === 0}
+                          aria-label="出題数"
+                        />
+                        <span className="countLabel chordPickCountSlash">
+                          {chordPickPoolSize === 0
+                            ? '0'
+                            : Math.min(questionCount, chordPickPoolSize)}{' '}
+                          / {chordPickPoolSize}問
+                        </span>
+                      </label>
+                    </div>
+                  </>
                 )}
 
-                <div className="settingsRow">
-                  <label className="keySelect">
-                    <span>音数</span>
-                    <input
-                      type="range"
-                      min={1}
-                      max={6}
-                      value={noteCountFilter}
-                      onChange={(e) => setNoteCountFilter(Number(e.target.value))}
-                      className="countBar"
-                    />
-                  </label>
-                  <span className="countLabel">{noteCountFilter}音</span>
+                {quizMode === 'random' && (
+                  <>
+                    <button
+                      type="button"
+                      className="filterToggle"
+                      onClick={() => setRandomFiltersOpen((o) => !o)}
+                      aria-expanded={randomFiltersOpen}
+                    >
+                      {randomFiltersOpen ? '▲' : '▼'} フィルタ
+                    </button>
+                    {randomFiltersOpen && (
+                      <>
+                        <div className="settingsRow">
+                          <label className="keySelect">
+                            <span>開始音</span>
+                            <select
+                              value={startPcFilter}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                setStartPcFilter(v === '' ? '' : Number(v))
+                              }}
+                            >
+                              <option value="">指定なし</option>
+                              <option value={0}>ド</option>
+                              <option value={1}>デ</option>
+                              <option value={2}>レ</option>
+                              <option value={3}>リ</option>
+                              <option value={4}>ミ</option>
+                              <option value={5}>ファ</option>
+                              <option value={6}>フィ</option>
+                              <option value={7}>ソ</option>
+                              <option value={8}>サ</option>
+                              <option value={9}>ラ</option>
+                              <option value={10}>チ</option>
+                              <option value={11}>シ</option>
+                            </select>
+                          </label>
+                          <label className="keySelect">
+                            <span>最終音</span>
+                            <select
+                              value={lastPcFilter}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                setLastPcFilter(v === '' ? '' : Number(v))
+                              }}
+                            >
+                              <option value="">指定なし</option>
+                              <option value={0}>ド</option>
+                              <option value={1}>デ</option>
+                              <option value={2}>レ</option>
+                              <option value={3}>リ</option>
+                              <option value={4}>ミ</option>
+                              <option value={5}>ファ</option>
+                              <option value={6}>フィ</option>
+                              <option value={7}>ソ</option>
+                              <option value={8}>サ</option>
+                              <option value={9}>ラ</option>
+                              <option value={10}>チ</option>
+                              <option value={11}>シ</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div className="settingsRow">
+                          <label className="keySelect">
+                            <span>音数</span>
+                            <select
+                              value={noteCountFilter}
+                              onChange={(e) => setNoteCountFilter(Number(e.target.value))}
+                            >
+                              {[1, 2, 3, 4, 5, 6].map((n) => (
+                                <option key={n} value={n}>
+                                  {n}音
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <div className="settingsRow questionCountRow">
+                          <span className="keySelect questionCountLabel">
+                            <span>出題数</span>
+                            <span className="numberStepper">
+                              <button
+                                type="button"
+                                className="stepBtn"
+                                aria-label="出題数を減らす"
+                                disabled={questionCount <= 1}
+                                onClick={() =>
+                                  setQuestionCount((c) => Math.max(1, c - 1))
+                                }
+                              >
+                                −
+                              </button>
+                              <input
+                                type="number"
+                                className="stepInput"
+                                min={1}
+                                max={questionCountMax}
+                                value={questionCount}
+                                onChange={(e) => {
+                                  const v = parseInt(e.target.value, 10)
+                                  if (Number.isNaN(v)) return
+                                  setQuestionCount(
+                                    Math.min(questionCountMax, Math.max(1, v)),
+                                  )
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="stepBtn"
+                                aria-label="出題数を増やす"
+                                disabled={questionCount >= questionCountMax}
+                                onClick={() =>
+                                  setQuestionCount((c) =>
+                                    Math.min(questionCountMax, c + 1),
+                                  )
+                                }
+                              >
+                                ＋
+                              </button>
+                            </span>
+                            <span className="countLabel slashMax">/ 15問</span>
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    <div className="settingsRow">
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          checked={randomNoBlack}
+                          onChange={(e) => setRandomNoBlack(e.target.checked)}
+                        />
+                        <span>白鍵のみ</span>
+                      </label>
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          checked={randomLimitLeap}
+                          onChange={(e) => setRandomLimitLeap(e.target.checked)}
+                        />
+                        <span>跳躍をオクターブ以下に固定</span>
+                      </label>
+                    </div>
+                  </>
+                )}
+
+                <div className="settingsHelpAboveStart">
+                  {quizMode === 'free' && (
+                    <>
+                      <div className="quizTextActions">
+                        <button
+                          type="button"
+                          className="helpHintChar"
+                          onClick={() => setFreeInputHelpOpen((o) => !o)}
+                          aria-expanded={freeInputHelpOpen}
+                          aria-label="入力の詳しい説明を表示"
+                        >
+                          ？
+                        </button>
+                      </div>
+                      {freeInputHelpOpen && (
+                        <div className="editorHelp freeInputHelpExpand">{freeInputHelpDetail}</div>
+                      )}
+                    </>
+                  )}
+                  {quizMode === 'chordPick' && (
+                    <>
+                      <div className="quizTextActions">
+                        <button
+                          type="button"
+                          className="helpHintChar"
+                          onClick={() => setChordPickHelpOpen((o) => !o)}
+                          aria-expanded={chordPickHelpOpen}
+                          aria-label="構成音から生成の説明を表示"
+                        >
+                          ？
+                        </button>
+                      </div>
+                      {chordPickHelpOpen && (
+                        <div className="editorHelp freeInputHelpExpand">
+                          休符と伸ばし棒も音符の一種として扱われますが、先頭に来た時は何もしません。
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {quizMode === 'random' && <div className="startButtonTopSpacer" aria-hidden />}
                 </div>
 
-                <div className="settingsRow">
-                  <label className="keySelect">
-                    <span>出題数</span>
-                    <input
-                      type="range"
-                      min={1}
-                      max={randomMode ? 15 : Math.max(1, poolSize)}
-                      value={effectiveQuestionCount}
-                      onChange={(e) => setQuestionCount(Number(e.target.value))}
-                      disabled={!canStart}
-                      className="countBar"
-                    />
-                  </label>
-                  <span className="countLabel">
-                    {randomMode
-                      ? `${effectiveQuestionCount}問 / 15問`
-                      : `${poolSize === 0 ? '0' : effectiveQuestionCount}問${poolSize > 0 ? ` / ${poolSize}問` : ''}`}
-                  </span>
-                </div>
-
-                <div className="settingsRow">
+                <div className="settingsRow settingsStartRow">
                   <button
                     type="button"
                     className="startBtn"
@@ -918,38 +1254,43 @@ function App() {
                     }}
                     disabled={!canStart}
                   >
-                    {quizState.kind !== 'idle' && quizState.kind !== 'finished'
-                      ? '中断して再スタート'
-                      : 'スタート'}
+                    {primaryStartLabel}
                   </button>
                 </div>
-              </>
+              </div>
+            )}
+
+            {quizState.kind === 'finished' && !problemSettingsOpen && (
+              <div className="finishedActionsBox">
+                <div className="finishedActions">
+                  <button
+                    type="button"
+                    className="startBtn"
+                    disabled={!canStart}
+                    onClick={() => {
+                      setProblemSettingsOpen(false)
+                      handleStart()
+                    }}
+                  >
+                    {primaryStartLabel}
+                  </button>
+                  <button
+                    type="button"
+                    className="startBtn startBtnSecondary"
+                    onClick={() => {
+                      setResultFreshForAgainStart(false)
+                      setProblemSettingsOpen(true)
+                    }}
+                  >
+                    設定編集
+                  </button>
+                </div>
+              </div>
             )}
           </div>
 
           <div className="qCount">
             {quizState.kind !== 'idle' ? `${presentCount} / ${cycleQueue.length} 問` : '\u00A0'}
-          </div>
-
-          <div className="io">
-            <div className="ioRow">
-              <div className="ioLabel">入力</div>
-              <div className="ioValue">
-                {inputNotes.map((n, idx) => (
-                  <span key={idx} className={n.wrong ? 'textWrong' : ''}>
-                    {normalizedToKatakana([n.pc])}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="ioRow">
-              <div className="ioLabel">解答</div>
-              <div className="ioValue textAnswer">
-                {answerNotes.map((pc, idx) => (
-                  <span key={idx}>{normalizedToKatakana([pc])}</span>
-                ))}
-              </div>
-            </div>
           </div>
 
           <div className="keyboardScroll" role="group" aria-label="piano keyboard">
@@ -1016,6 +1357,27 @@ function App() {
             </div>
           </div>
 
+          <div className="io">
+            <div className="ioRow">
+              <div className="ioLabel">入力</div>
+              <div className="ioValue">
+                {inputNotes.map((n, idx) => (
+                  <span key={idx} className={n.wrong ? 'textWrong' : ''}>
+                    {normalizedToKatakana([n.pc])}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="ioRow">
+              <div className="ioLabel">解答</div>
+              <div className="ioValue textAnswer">
+                {answerNotes.map((pc, idx) => (
+                  <span key={idx}>{normalizedToKatakana([pc])}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {quizState.kind === 'finished' && (
             <div className="logs">
               <h2>結果</h2>
@@ -1061,109 +1423,6 @@ function App() {
             </div>
           )}
 
-          <div className="editorWrap">
-            <button
-              type="button"
-              className="editorToggle"
-              onClick={() => setEditorOpen((v) => !v)}
-            >
-              {editorOpen ? '▲' : '▼'} 問題セット編集
-            </button>
-
-            {editorOpen && (
-              <div className="editor">
-                <div className="editorRow">
-                  <label className="keySelect">
-                    <span>読み込み</span>
-                    <select
-                      value={editorSelectedTitle}
-                      onChange={(e) => void loadEditorSelection(e.target.value)}
-                    >
-                      <option value="__new__">新規作成</option>
-                      {userProblemSets.map((s) => (
-                        <option key={s.meta.title} value={s.meta.title}>
-                          {s.meta.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="startBtn"
-                    onClick={() => void handleEditorSave()}
-                  >
-                    保存
-                  </button>
-                  <button
-                    type="button"
-                    className="startBtn"
-                    onClick={() => void handleEditorDelete()}
-                    disabled={editorSelectedTitle === '__new__'}
-                  >
-                    削除
-                  </button>
-                </div>
-
-                <div className="editorRow">
-                  <label className="keySelect editorTitle">
-                    <span>タイトル</span>
-                    <input
-                      value={editorTitle}
-                      onChange={(e) => setEditorTitle(e.target.value)}
-                      placeholder="（空欄なら自動）"
-                    />
-                  </label>
-                </div>
-
-                <div className="editorRow">
-                  <label className="editorBody">
-                    <span>内容（1行=1問）</span>
-                    <textarea
-                      value={editorBody}
-                      onChange={(e) => setEditorBody(e.target.value)}
-                      rows={8}
-                    />
-                  </label>
-                  <div className="editorHelp">{editorNewHelp}</div>
-                </div>
-                <div className="editorRow">
-                  <button
-                    type="button"
-                    className="startBtn"
-                    onClick={() => void handleExportProblemSets()}
-                  >
-                    エクスポート
-                  </button>
-                  <button
-                    type="button"
-                    className="startBtn"
-                    onClick={() => importInputRef.current?.click()}
-                  >
-                    インポート
-                  </button>
-                  <input
-                    ref={importInputRef}
-                    type="file"
-                    accept="application/json,.json"
-                    className="fileInputHidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      e.currentTarget.value = ''
-                      if (!file) return
-                      void handleImportProblemSets(file).catch(() => {
-                        window.alert('インポートに失敗しました。JSON形式を確認してください。')
-                      })
-                    }}
-                  />
-                </div>
-                <div className="editorRow">
-                  <div className="editorHelp">
-                    ブラウザ側で保存されている全ての問題セットをエクスポート/インポートできます。
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
         </section>
         <div className="footerLinks">
           <a href="https://aramugi.com" target="_blank" rel="noreferrer">

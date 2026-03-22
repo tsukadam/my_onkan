@@ -5,6 +5,9 @@
   padding: 18px 16px 24px;
   flex: 1;
   box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .header {
@@ -87,7 +90,15 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 8px 10px;
-  min-width: 220px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (min-width: 480px) {
+  .keySelect input {
+    min-width: min(220px, 100%);
+  }
 }
 
 .keySelect input:focus-visible {
@@ -98,11 +109,16 @@
 .main {
   display: grid;
   place-items: start center;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .panel {
   width: min(920px, 100%);
+  max-width: 100%;
   text-align: left;
+  min-width: 0;
 }
 
 .panel h2 {
@@ -110,8 +126,12 @@
   font-size: 18px;
 }
 
-.settings {
+.quizGameControls {
   margin-bottom: 16px;
+}
+
+.settings {
+  margin-top: 10px;
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -189,29 +209,61 @@
 
 .modeTabs {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
   align-items: center;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.02);
 }
 
 .modeTab {
   font: 14px/1.2 var(--sans);
-  padding: 10px 12px;
-  border-radius: 12px 12px 0 0;
+  padding: 10px 16px;
+  border-radius: 10px;
   border: 1px solid var(--border);
-  border-bottom: 0;
   background: rgba(0, 0, 0, 0.02);
   color: var(--text-h);
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, filter 120ms ease;
+}
+
+.modeTab:hover {
+  filter: brightness(0.98);
 }
 
 .modeTab.active {
   border-color: rgba(168, 85, 247, 0.35);
   background: rgba(168, 85, 247, 0.14);
+}
+
+.finishedActionsBox {
+  margin-top: 10px;
+  padding: 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  display: flex;
+  justify-content: center;
+}
+
+.finishedActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.settingsStartRow {
+  justify-content: center;
+  width: 100%;
+}
+
+.startBtnSecondary {
+  background: transparent;
+  color: var(--text-h);
+}
+
+.startBtnSecondary:hover:not(:disabled) {
+  filter: brightness(0.97);
 }
 
 .globalSettings {
@@ -232,12 +284,11 @@
   display: block;
 }
 
-.viewUser .settings,
+.viewUser .quizGameControls,
 .viewUser .qCount,
 .viewUser .io,
 .viewUser .keyboardScroll,
 .viewUser .logs,
-.viewUser .editorWrap,
 .viewUser .footerLinks {
   display: none;
 }
@@ -296,6 +347,39 @@
   color: var(--text-h);
 }
 
+/* 構成音から生成: 出題数・スライダー・「n / N問」を1行に収める */
+.chordPickCountRow {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.chordPickCountRow .chordPickCountLabel {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chordPickCountTitle {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.chordPickCountBar {
+  flex: 1 1 auto;
+  min-width: 48px;
+  width: auto !important;
+  max-width: 100%;
+}
+
+.chordPickCountSlash {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .startBtn {
   font: 14px/1.2 var(--sans);
   padding: 10px 20px;
@@ -328,7 +412,7 @@
 .io {
   display: grid;
   gap: 8px;
-  margin: 0 0 12px;
+  margin: 12px 0 12px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -474,20 +558,198 @@
   overflow: hidden;
 }
 
-.editorWrap {
-  margin-top: 14px;
+.userSettingsEditor {
+  margin-top: 12px;
 }
 
-.editorToggle {
+.filterToggle {
   width: 100%;
   text-align: left;
   font: 14px/1.2 var(--sans);
   padding: 10px 12px;
+  margin-top: 10px;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.02);
   color: var(--text-h);
   cursor: pointer;
+}
+
+.quizTextBlock {
+  margin-top: 4px;
+}
+
+.quizTextActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.settingsHelpAboveStart {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.settingsHelpAboveStart .quizTextActions {
+  margin-top: 0;
+}
+
+.startButtonTopSpacer {
+  min-height: 28px;
+}
+
+/* 見た目は本文の「？」、当たりだけ広く（歯車ボタンと同趣旨） */
+.helpHintChar {
+  margin: 0;
+  padding: 0px 0px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-h);
+  font: inherit;
+  font-size: 13px;
+  font-weight: inherit;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  min-height: 20px;
+  box-sizing: border-box;
+}
+
+.helpHintChar:hover {
+  filter: brightness(0.98);
+}
+
+.helpHintChar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.freeInputHelpExpand {
+  margin-top: 8px;
+}
+
+.quizTextBlock .editorBodyNoLabel {
+  display: block;
+  width: 100%;
+}
+
+.quizTextBlock .editorBody textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: 13px/1.4 var(--mono);
+  color: var(--text-h);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.quizTextBlock .editorBody textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.questionCountRow .questionCountLabel {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 構成音から生成: 「出題数」〜「/ N問」を1行に */
+.questionCountRowCompact {
+  justify-content: center;
+}
+
+.questionCountRowCompact .questionCountLabel {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.questionCountRowCompact .numberStepper {
+  flex-shrink: 0;
+}
+
+.questionCountRowCompact .stepBtn {
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+}
+
+.questionCountRowCompact .stepInput {
+  width: 40px;
+  padding: 4px 2px;
+  font-size: 13px;
+}
+
+.questionCountRowCompact .slashMax {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.numberStepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stepBtn {
+  font: 16px/1 var(--sans);
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.stepBtn:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+
+.stepBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.stepInput {
+  width: 52px;
+  text-align: center;
+  font: 14px/1.2 var(--mono);
+  padding: 8px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  color: var(--text-h);
+}
+
+.stepInput:disabled {
+  opacity: 0.5;
+}
+
+.slashMax {
+  margin-left: 2px;
+}
+
+.stepInput[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.stepInput[type='number']::-webkit-outer-spin-button,
+.stepInput[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .editor {
@@ -572,9 +834,9 @@
 .keyboard {
   --unit: calc(100% / 15);
   --white-w: var(--unit);
-  --white-h: 240px;
+  --white-h: 204px;
   --black-w: calc(var(--unit) * 0.65);
-  --black-h: 150px;
+  --black-h: 128px;
 
   position: relative;
   width: 100%;
@@ -696,7 +958,7 @@
 
 @media (max-width: 720px) {
   .keyboard {
-    --white-h: 200px;
-    --black-h: 125px;
+    --white-h: 170px;
+    --black-h: 106px;
   }
 }

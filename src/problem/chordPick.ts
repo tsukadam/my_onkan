@@ -1,0 +1,287 @@
+import { parseEditorTextToQuestions } from '../db/editorText'
+import { NOTE_TOKENS, type ParsedStep } from './parse'
+import { normalizedToKatakana } from './normalize'
+import type { PoolItem } from '../problems/pool'
+
+/** 鍵盤表示範囲 C3..C5 */
+const KB_MIN = 48
+const KB_MAX = 72
+
+type ChordTok =
+  | { kind: 'note'; pc: number; voiceIndex: number }
+  | { kind: 'rest'; raw: string }
+  | { kind: 'extend' }
+
+function isRestChar(ch: string) {
+  return ch === ' ' || ch === '　'
+}
+function isExtendChar(ch: string) {
+  return ch === '-' || ch === '－' || ch === 'ー'
+}
+function isUpChar(ch: string) {
+  return ch === '↑'
+}
+function isDownChar(ch: string) {
+  return ch === '↓'
+}
+
+/**
+ * 音符・休符・伸ばし（ー）を独立トークンとして切り出す。ーは直前音にマージしない。
+ * 各音符に「直前の音に最も近い」ルールで絶対音高を付与。
+ */
+export function tokenizeChordPickLine(line: string): { ok: true; tokens: ChordTok[]; refMidis: number[] } | { ok: false; error: string } {
+  const text = line.replace(/\r/g, '')
+  if (!/[^\s　]/.test(text)) return { ok: false, error: '空行です。' }
+
+  const tokens: ChordTok[] = []
+  const refMidis: number[] = []
+
+  let i = 0
+  let pendingShift = 0
+  let guideMidi = 60
+  let isFirstNote = true
+  let voiceIndex = 0
+
+  while (i < text.length) {
+    const ch = text[i] ?? ''
+
+    if (isUpChar(ch)) {
+      pendingShift += 1
+      i += 1
+      continue
+    }
+    if (isDownChar(ch)) {
+      pendingShift -= 1
+      i += 1
+      continue
+    }
+
+    if (isRestChar(ch)) {
+      pendingShift = 0
+      tokens.push({ kind: 'rest', raw: ch })
+      i += 1
+      continue
+    }
+
+    if (isExtendChar(ch)) {
+      pendingShift = 0
+      tokens.push({ kind: 'extend' })
+      i += 1
+      continue
+    }
+
+    const candidates = NOTE_TOKENS.filter((t) => text.startsWith(t.token, i))
+    if (candidates.length === 0) {
+      return { ok: false, error: `未知のトークン: 「${text.slice(i, i + 4)}…」` }
+    }
+    candidates.sort((a, b) => b.token.length - a.token.length)
+    const tok = candidates[0]!
+    const pc = ((tok.semitone % 12) + 12) % 12
+
+    let midi: number
+    if (isFirstNote && pendingShift === 0) {
+      midi = 60 + pc
+    } else {
+      const k = Math.round((guideMidi - pc) / 12)
+      midi = pc + 12 * k
+    }
+    if (pendingShift !== 0) midi += 12 * pendingShift
+
+    refMidis[voiceIndex] = midi
+    tokens.push({ kind: 'note', pc, voiceIndex })
+    guideMidi = midi
+    isFirstNote = false
+    pendingShift = 0
+    voiceIndex += 1
+    i += tok.token.length
+  }
+
+  const noteCount = tokens.filter((t) => t.kind === 'note').length
+  if (noteCount < 2) {
+    return { ok: false, error: '構成音は2音以上にしてください。' }
+  }
+
+  return { ok: true, tokens, refMidis }
+}
+
+function permutationsIndices(n: number): number[][] {
+  const idx = Array.from({ length: n }, (_, i) => i)
+  function rec(arr: number[]): number[][] {
+    if (arr.length <= 1) return [arr]
+    const out: number[][] = []
+    for (let i = 0; i < arr.length; i++) {
+      const first = arr[i]!
+      const rest = arr.filter((_, j) => j !== i)
+      for (const p of rec(rest)) {
+        out.push([first, ...p])
+      }
+    }
+    return out
+  }
+  return rec(idx)
+}
+
+function applyOctaveMask(base: number[], shiftableIndices: number[], mask: boolean[]): number[] {
+  const midis = [...base]
+  for (let j = 0; j < shiftableIndices.length; j++) {
+    if (mask[j]) {
+      const vi = shiftableIndices[j]!
+      midis[vi] = midis[vi]! - 12
+    }
+  }
+  return midis
+}
+
+function allBoolMasks(k: number): boolean[][] {
+  if (k === 0) return [[]]
+  const out: boolean[][] = []
+  for (let m = 0; m < 1 << k; m++) {
+    const row: boolean[] = []
+    for (let b = 0; b < k; b++) row.push(((m >> b) & 1) === 1)
+    out.push(row)
+  }
+  return out
+}
+
+function inKeyboard(m: number): boolean {
+  return m >= KB_MIN && m <= KB_MAX
+}
+
+/** トークン列から再生用 ParsedStep を組み立てる */
+function buildStepsFromTokenOrder(
+  order: number[],
+  allTokens: ChordTok[],
+  voiceMidis: number[],
+): ParsedStep[] {
+  const steps: ParsedStep[] = []
+
+  for (const ti of order) {
+    const tok = allTokens[ti]!
+    if (tok.kind === 'rest') {
+      steps.push({ kind: 'rest', quarters: 1, raw: tok.raw })
+    } else if (tok.kind === 'extend') {
+      for (let s = steps.length - 1; s >= 0; s--) {
+        const prev = steps[s]!
+        if (prev.kind === 'note') {
+          prev.quarters += 1
+          break
+        }
+      }
+    } else {
+      const m = voiceMidis[tok.voiceIndex]!
+      steps.push({
+        kind: 'note',
+        pc: tok.pc,
+        midi: m,
+        quarters: 1,
+        raw: 'R',
+      })
+    }
+  }
+
+  return steps
+}
+
+/** 先頭の休符・伸ばし（未使用のー）を除いた音符のPC列（解答用） */
+function stepsToAnswerPcs(steps: ParsedStep[]): number[] {
+  const pcs: number[] = []
+  let seenNote = false
+  for (const s of steps) {
+    if (s.kind === 'note') {
+      seenNote = true
+      pcs.push(((s.pc % 12) + 12) % 12)
+    } else if (s.kind === 'rest') {
+      if (!seenNote) continue
+    }
+  }
+  return pcs
+}
+
+function stepsDedupeKey(steps: ParsedStep[]): string {
+  return JSON.stringify(
+    steps.map((s) => {
+      if (s.kind === 'note') return ['n', s.midi, s.quarters] as const
+      if (s.kind === 'rest') return ['r', s.quarters, s.raw] as const
+      return ['?']
+    }),
+  )
+}
+
+/** 成績・ログ用: 順列どおりに音符・休符・伸ばし（ー）を並べた表記 */
+function displayStringForOrder(order: number[], tokens: ChordTok[]): string {
+  let s = ''
+  for (const ti of order) {
+    const tok = tokens[ti]!
+    if (tok.kind === 'note') {
+      s += normalizedToKatakana([tok.pc])
+    } else if (tok.kind === 'rest') {
+      s += tok.raw
+    } else {
+      s += 'ー'
+    }
+  }
+  return s
+}
+
+export function buildChordPickPoolForLine(line: string): PoolItem[] {
+  const parsed = tokenizeChordPickLine(line)
+  if (!parsed.ok) return []
+
+  const { tokens, refMidis } = parsed
+  const nTok = tokens.length
+  const nNote = refMidis.length
+
+  const minMidi = Math.min(...refMidis)
+  const shiftableVoices: number[] = []
+  for (let vi = 0; vi < nNote; vi++) {
+    if (refMidis[vi]! > minMidi) shiftableVoices.push(vi)
+  }
+
+  const perms = permutationsIndices(nTok)
+  const masks = allBoolMasks(shiftableVoices.length)
+  const seen = new Set<string>()
+  const out: PoolItem[] = []
+
+  for (const mask of masks) {
+    const voiceMidis = applyOctaveMask(refMidis, shiftableVoices, mask)
+
+    for (const perm of perms) {
+      const steps = buildStepsFromTokenOrder(perm, tokens, voiceMidis)
+      const noteMidis = steps.filter((s): s is Extract<ParsedStep, { kind: 'note' }> => s.kind === 'note').map((s) => s.midi)
+      if (noteMidis.length > 0 && !noteMidis.every(inKeyboard)) continue
+
+      const key = stepsDedupeKey(steps)
+      if (seen.has(key)) continue
+      seen.add(key)
+
+      const answerPcs = stepsToAnswerPcs(steps)
+      const raw = displayStringForOrder(perm, tokens)
+
+      out.push({
+        raw,
+        setId: 'chordPick',
+        steps: steps as any,
+        normalizedNotes: answerPcs,
+      })
+    }
+  }
+
+  return out
+}
+
+export function buildChordPickPoolFromEditorText(text: string): PoolItem[] {
+  const { validLines } = parseEditorTextToQuestions(text)
+  const seen = new Set<string>()
+  const out: PoolItem[] = []
+
+  for (const line of validLines) {
+    for (const item of buildChordPickPoolForLine(line)) {
+      const key = stepsDedupeKey(item.steps as ParsedStep[])
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(item)
+    }
+  }
+
+  return out
+}
