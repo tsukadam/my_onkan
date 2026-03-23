@@ -15,7 +15,7 @@ export function FreeQuizSettings({ text, onTextChange, helpOpen, onHelpOpenToggl
           <textarea
             value={text}
             onChange={(e) => onTextChange(e.target.value)}
-            rows={4}
+            rows={3}
             placeholder={UI_PLACEHOLDERS.quizFreeTextarea}
             aria-label="問題テキスト（自由入力）"
           />

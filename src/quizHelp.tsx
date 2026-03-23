@@ -34,9 +34,13 @@ export const QUIZ_HELP_MODE_SPECIFIC = {
 
 // --- ユーザー設定（ギア画面）: ここに平文のヘルプを置く ---
 export const USER_SETTINGS_HELP_TEXT =
+  '相対音感のトレーニング用アプリです。\n' +
+  'キーの設定によらずC調の鍵盤で表すことで、メロディをディグリーで捉えやすくします。\n' +
+  '\n' +
   'ヒント：\n' +
   '鍵盤外の音は表示されません。\n' +
-  '同名音はどのオクターブで回答しても正解になります。\n'
+  '同名音はどのオクターブで回答しても正解になります。\n' +
+  '音が鳴らない時は鍵盤を１度押してください。'
 
 export type QuizHelpMode = keyof typeof QUIZ_HELP_MODE_SPECIFIC
 

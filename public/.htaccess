@@ -1,11 +1,12 @@
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  RewriteBase /onkan/
-
   RewriteRule ^index\.html$ - [L]
-  RewriteCond %{REQUEST_FILENAME} -f [OR]
-  RewriteCond %{REQUEST_FILENAME} -d
-  RewriteRule . - [L]
 
+  # PWA/manifest は SPA リライト対象から除外（-f/-d 判定が外れても確実に素通しする）
+  RewriteRule ^manifest(\.app)?\.webmanifest$ - [L]
+  RewriteRule ^sw\.js$ - [L]
+
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule . /onkan/index.html [L]
 </IfModule>

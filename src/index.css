@@ -83,8 +83,8 @@
     --radius-sm: 4px;
     --radius-xs: 2px;
 
-    --pad-page-y: 12px;
-    --pad-page-x: 12px;
+    --pad-page-y: 10px;
+    --pad-page-x: 10px;
     --pad-page-bottom: 16px;
     --gap-app: 12px;
     --pad-section-y: 9px;
@@ -131,7 +131,13 @@
 
 body {
   margin: 0;
-  overflow-x: clip;
+  overflow-x: hidden;
+}
+
+@media (max-width: 720px) {
+  #root {
+    border-inline: 0;
+  }
 }
 
 h1,

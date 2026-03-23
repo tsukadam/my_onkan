@@ -62,6 +62,12 @@ $env:VITE_BASE_PATH='/onkan/'
 npm run build
 ```
 
+または Windows のバッチ:
+
+```bat
+build-onkan.bat
+```
+
 生成された `dist/` を `/onkan/` 配下に配置してください。  
 `public/.htaccess` は `dist/.htaccess` として出力されるので、同時に配置されます。
 

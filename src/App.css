@@ -191,17 +191,27 @@
 }
 
 .modeTabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
   gap: var(--mode-tabs-gap);
+  min-width: 0;
+}
+
+.modeTabsLeft {
+  display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
+  gap: var(--mode-tabs-gap);
+  min-width: 0;
 }
 
 .modeTabsRight {
-  margin-left: auto;
   display: inline-flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
+  justify-self: end;
+  flex: 0 0 auto;
 }
 
 .modeTab {
@@ -264,10 +274,6 @@
 .userSettingsPanel {
   display: none;
   margin-bottom: 16px;
-  padding: var(--pad-section-y) var(--pad-section-x);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: rgba(0, 0, 0, 0.02);
 }
 
 .viewUser .userSettingsPanel {
@@ -286,7 +292,6 @@
   white-space: pre-wrap;
 }
 
-.viewUser .quizGameControls,
 .viewUser .qCount,
 .viewUser .io,
 .viewUser .keyboardScroll,
@@ -295,11 +300,35 @@
   display: none;
 }
 
+.viewUser .quizGameControls {
+  display: block;
+  order: 0;
+  margin-bottom: 0;
+}
+
+.viewUser .quizGameControls .settings,
+.viewUser .quizGameControls .finishedActionsBox {
+  display: none;
+}
+
+.viewUser .panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.viewUser .userSettingsPanel {
+  order: 1;
+}
+
+.viewUser .userSettingsHelpPlain {
+  order: 2;
+}
+
 .settingsRow {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 10px 0px;
+  gap: 6px;
+  margin: 0px 0px;
   flex-wrap: wrap;
 }
 
@@ -418,6 +447,7 @@
 
 /* .keySelect input の広い画面用 min-width(220px) を打ち消し、開始/終了はコンパクトに */
 .fixedEndStartEndRow .fixedEndStartEndLabel input.fixedEndStartEndInput {
+  margin-bottom:10px;
   min-width: 0 !important;
   width: 5.5em;
   flex: 0 0 auto;
@@ -427,6 +457,7 @@
 
 @media (min-width: 480px) {
   .fixedEndStartEndRow .fixedEndStartEndLabel input.fixedEndStartEndInput {
+    margin-bottom:10px;
     min-width: 0 !important;
     width: 5.5em;
   }
@@ -444,6 +475,7 @@
 }
 
 .fixedEndMiddleRow {
+  margin-bottom:10px;
   flex-wrap: nowrap;
   min-width: 0;
 }
@@ -674,7 +706,7 @@
 
 .settingsHelpAboveStart {
   width: 100%;
-  margin-bottom: 10px;
+  margin-bottom: 0px;
 }
 
 .settingsHelpAboveStart .quizTextActions {
@@ -892,7 +924,8 @@
 
 .editorHelp {
   width: 100%;
-  margin-top: 6px;
+  margin-top: 0px;
+  margin-bottom: 5px;
   font: 12px/1.5 var(--mono);
   color: #9ca3af;
   white-space: pre-wrap;
@@ -928,9 +961,23 @@
 }
 
 .footerAdSlot {
-  width: min(920px, 100%);
+  display: none;
+  width: min(880px, 96%);
   margin-top: 10px;
   min-height: 0;
+  margin-inline: auto;
+  overflow: hidden;
+}
+
+.footerAdSlot.hasAd {
+  display: block;
+}
+
+.footerAdSlot .adsbygoogle {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  background: transparent !important;
 }
 
 .footerLinks a {
@@ -1069,13 +1116,13 @@
 
 @media (max-width: 720px) {
   .keyboard {
-    --white-h: 170px;
-    --black-h: 106px;
+    --white-h: 153px;
+    --black-h: 95px;
   }
 }
 
 /* iOS Safari などの「入力フォーカス時ズーム」を防ぐ定番対応 */
-@media (max-width: 900px) {
+@media (hover: none) and (pointer: coarse) {
   .keySelect select,
   .keySelect input,
   .editorBody textarea,
@@ -1086,3 +1133,4 @@
     font-size: 16px !important;
   }
 }
+
