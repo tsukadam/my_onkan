@@ -16,6 +16,8 @@ import {
 } from './db/problemSets'
 import { formatProblemSetToEditorText, parseEditorTextToQuestions } from './db/editorText'
 import { buildChordPickPoolFromEditorText } from './problem/chordPick'
+import { buildRandomMelodyPool } from './problem/randomMelody'
+import { QuizModeHelpPanel, UI_PLACEHOLDERS } from './quizHelp'
 import './App.css'
 
 type QuizMode = 'free' | 'random' | 'chordPick'
@@ -91,13 +93,13 @@ function App() {
     useState<(typeof KEY_OPTIONS)[number]['id']>('C')
   const [quizInlineText, setQuizInlineText] = useState('')
   const [freeInputHelpOpen, setFreeInputHelpOpen] = useState(false)
-  const [randomFiltersOpen, setRandomFiltersOpen] = useState(false)
-  const [noteCountFilter, setNoteCountFilter] = useState<number>(3)
-  const [startPcFilter, setStartPcFilter] = useState<number | ''>('')
-  const [lastPcFilter, setLastPcFilter] = useState<number | ''>('')
+  const [randomStartText, setRandomStartText] = useState('')
+  const [randomEndText, setRandomEndText] = useState('')
+  const [randomMiddleText, setRandomMiddleText] = useState('')
   const [quizMode, setQuizMode] = useState<QuizMode>('free')
   const [chordPickText, setChordPickText] = useState('')
   const [chordPickHelpOpen, setChordPickHelpOpen] = useState(false)
+  const [randomMelodyHelpOpen, setRandomMelodyHelpOpen] = useState(false)
   const [randomNoBlack, setRandomNoBlack] = useState(true)
   const [randomLimitLeap, setRandomLimitLeap] = useState(true)
   const [questionCount, setQuestionCount] = useState<number>(10)
@@ -118,6 +120,28 @@ function App() {
   const prevQuizModeRef = useRef<QuizMode>('free')
   /** 構成音モードで「入室時の出題数デフォルト」を一度だけ適用したか */
   const chordPickDefaultsAppliedRef = useRef(false)
+  /** 開始音・終始音指定モードで出題数デフォルトを一度だけ適用したか */
+  const randomMelodyDefaultsAppliedRef = useRef(false)
+
+  /** 出題モードタブ: 解答中は同一タブで開閉トグル、別モードへ切替時は開く（折りたたみ後に他モードへ切替なら再オープン） */
+  const handleModeTabClick = useCallback(
+    (next: QuizMode) => {
+      if (quizState.kind === 'finished') {
+        setResultFreshForAgainStart(false)
+        setProblemSettingsOpen(true)
+      } else if (quizState.kind === 'idle') {
+        setProblemSettingsOpen(true)
+      } else {
+        if (quizMode === next) {
+          setProblemSettingsOpen((v) => !v)
+        } else {
+          setProblemSettingsOpen(true)
+        }
+      }
+      setQuizMode(next)
+    },
+    [quizState.kind, quizMode],
+  )
 
   // タブの折りたたみ状態:
   // - 初期（idle）は展開固定
@@ -174,17 +198,6 @@ function App() {
         'オクターブ違いの同名音は、直前の音に最も近い音が選ばれます。',
         '音名の前に↑や↓をつけるとオクターブを上下できます。',
         ' ',
-        '全角/半角スペースで休符',
-        '伸ばし棒（ー）で音値を伸ばす',
-      ].join('\n'),
-    [],
-  )
-
-  const freeInputHelpDetail = useMemo(
-    () =>
-      [
-        'オクターブ違いの同名音は、直前の音に最も近い音が選ばれます。',
-        '音名の前にやか↓をつけるとオクターブを上下できます。',
         '全角/半角スペースで休符',
         '伸ばし棒（ー）で音値を伸ばす',
       ].join('\n'),
@@ -385,15 +398,29 @@ function App() {
     [quizMode, chordPickText],
   )
 
+  const randomMelodyPool = useMemo(
+    () =>
+      quizMode === 'random'
+        ? buildRandomMelodyPool({
+            startText: randomStartText,
+            endText: randomEndText,
+            middleText: randomMiddleText,
+            noBlack: randomNoBlack,
+            limitLeap: randomLimitLeap,
+          })
+        : [],
+    [quizMode, randomStartText, randomEndText, randomMiddleText, randomNoBlack, randomLimitLeap],
+  )
+
   const poolSize = pool.length
   const chordPickPoolSize = chordPickPool.length
-
-  const questionCountMax =
-    quizMode === 'random' ? 15 : quizMode === 'chordPick' ? Math.max(1, chordPickPoolSize || 1) : 15
+  const randomMelodyPoolSize = randomMelodyPool.length
 
   const effectiveQuestionCount =
     quizMode === 'random'
-      ? Math.min(Math.max(1, questionCount), 15)
+      ? randomMelodyPoolSize === 0
+        ? 1
+        : Math.min(Math.max(1, questionCount), randomMelodyPoolSize)
       : quizMode === 'chordPick'
         ? chordPickPoolSize === 0
           ? 1
@@ -401,7 +428,11 @@ function App() {
         : poolSize
 
   const canStart =
-    quizMode === 'random' ? true : quizMode === 'free' ? poolSize > 0 : chordPickPoolSize > 0
+    quizMode === 'random'
+      ? randomMelodyPoolSize > 0
+      : quizMode === 'free'
+        ? poolSize > 0
+        : chordPickPoolSize > 0
 
   const primaryStartLabel =
     quizState.kind === 'finished'
@@ -413,14 +444,11 @@ function App() {
         : 'スタート'
 
   useEffect(() => {
-    if (quizMode === 'random') {
-      setQuestionCount((c) => Math.min(Math.max(1, c), 15))
-    }
-  }, [quizMode])
-
-  useEffect(() => {
     if (quizMode === 'chordPick' && prevQuizModeRef.current !== 'chordPick') {
       chordPickDefaultsAppliedRef.current = false
+    }
+    if (quizMode === 'random' && prevQuizModeRef.current !== 'random') {
+      randomMelodyDefaultsAppliedRef.current = false
     }
     prevQuizModeRef.current = quizMode
   }, [quizMode])
@@ -443,6 +471,25 @@ function App() {
       return Math.max(1, clamped)
     })
   }, [quizMode, chordPickPoolSize])
+
+  useEffect(() => {
+    if (quizMode !== 'random') return
+    if (randomMelodyPoolSize === 0) return
+    const max = randomMelodyPoolSize
+    const defaultCount = max <= 10 ? max : 10
+
+    if (!randomMelodyDefaultsAppliedRef.current) {
+      randomMelodyDefaultsAppliedRef.current = true
+      setQuestionCount(defaultCount)
+      return
+    }
+
+    setQuestionCount((prev) => {
+      const clamped = Math.min(prev, max)
+      if (max <= 10) return max
+      return Math.max(1, clamped)
+    })
+  }, [quizMode, randomMelodyPoolSize])
 
   const pickQuestionAt = useCallback((pos: number, queue: number[]) => {
     const items = currentPoolRef.current
@@ -518,51 +565,16 @@ function App() {
 
     let slice: PoolItem[]
     if (quizMode === 'random') {
-      const makeRandomQuestion = (): PoolItem => {
-        const noteCount = noteCountFilter
-        const pcs: number[] = []
-        const pcPool = randomNoBlack ? [0, 2, 4, 5, 7, 9, 11] : Array.from({ length: 12 }, (_, i) => i)
-        for (let i = 0; i < noteCount; i++) pcs.push(pcPool[Math.floor(Math.random() * pcPool.length)]!)
-        if (startPcFilter !== '' && pcs.length > 0) pcs[0] = startPcFilter
-        if (lastPcFilter !== '' && pcs.length > 0) pcs[pcs.length - 1] = lastPcFilter
-
-        // Random absolute midi notes within keyboard range C3..C5 (48..72)
-        const midis: number[] = []
-        for (let i = 0; i < pcs.length; i++) {
-          const pc = pcs[i]!
-          const base = 48 + pc
-          const choices = [base, base + 12, base + 24].filter((m) => m >= 48 && m <= 72)
-          if (i === 0 || !randomLimitLeap) {
-            midis.push(choices[Math.floor(Math.random() * choices.length)]!)
-            continue
-          }
-          const prev = midis[i - 1]!
-          const withinOctave = choices.filter((m) => Math.abs(m - prev) <= 12)
-          if (withinOctave.length > 0) {
-            midis.push(withinOctave[Math.floor(Math.random() * withinOctave.length)]!)
-          } else {
-            // keyboard range constraint may leave no candidate; pick nearest fallback
-            midis.push([...choices].sort((a, b) => Math.abs(a - prev) - Math.abs(b - prev))[0]!)
-          }
-        }
-
-        const steps = midis.map((m) => ({
-          kind: 'note' as const,
-          pc: ((m % 12) + 12) % 12,
-          midi: m,
-          quarters: 1,
-          raw: 'R',
-        }))
-
-        return {
-          raw: normalizedToKatakana(pcs),
-          setId: 'random',
-          steps: steps as any,
-          normalizedNotes: pcs,
-        }
-      }
-
-      slice = Array.from({ length: effectiveQuestionCount }, makeRandomQuestion)
+      const built = buildRandomMelodyPool({
+        startText: randomStartText,
+        endText: randomEndText,
+        middleText: randomMiddleText,
+        noBlack: randomNoBlack,
+        limitLeap: randomLimitLeap,
+      })
+      if (built.length === 0) return
+      const take = Math.min(Math.max(1, questionCount), built.length)
+      slice = shufflePool(built).slice(0, take)
     } else if (quizMode === 'chordPick') {
       const built = buildChordPickPoolFromEditorText(chordPickText)
       if (built.length === 0) return
@@ -592,16 +604,16 @@ function App() {
   }, [
     canStart,
     effectiveQuestionCount,
-    lastPcFilter,
-    noteCountFilter,
     quizInlineText,
     questionCount,
+    randomEndText,
     randomLimitLeap,
+    randomMiddleText,
     randomNoBlack,
+    randomStartText,
     chordPickText,
     quizMode,
     startCurrentQuestion,
-    startPcFilter,
     tempoBpm,
   ])
 
@@ -880,7 +892,7 @@ function App() {
                     <input
                       value={editorTitle}
                       onChange={(e) => setEditorTitle(e.target.value)}
-                      placeholder="（空欄なら自動）"
+                      placeholder={UI_PLACEHOLDERS.editorProblemSetTitle}
                     />
                   </label>
                 </div>
@@ -930,17 +942,7 @@ function App() {
               <button
                 type="button"
                 className={`modeTab ${quizMode === 'free' ? 'active' : ''}`}
-                onClick={() => {
-                  if (quizState.kind === 'finished') {
-                    setResultFreshForAgainStart(false)
-                    setProblemSettingsOpen(true) // 結果用ボタン箱を出さない
-                  } else if (quizState.kind === 'idle') {
-                    setProblemSettingsOpen(true)
-                  } else {
-                    setProblemSettingsOpen((v) => !v)
-                  }
-                  setQuizMode('free')
-                }}
+                onClick={() => handleModeTabClick('free')}
                 role="tab"
                 aria-selected={quizMode === 'free'}
               >
@@ -949,36 +951,16 @@ function App() {
               <button
                 type="button"
                 className={`modeTab ${quizMode === 'random' ? 'active' : ''}`}
-                onClick={() => {
-                  if (quizState.kind === 'finished') {
-                    setResultFreshForAgainStart(false)
-                    setProblemSettingsOpen(true) // 結果用ボタン箱を出さない
-                  } else if (quizState.kind === 'idle') {
-                    setProblemSettingsOpen(true)
-                  } else {
-                    setProblemSettingsOpen((v) => !v)
-                  }
-                  setQuizMode('random')
-                }}
+                onClick={() => handleModeTabClick('random')}
                 role="tab"
                 aria-selected={quizMode === 'random'}
               >
-                ランダムメロディ
+                開始音・終止音指定
               </button>
               <button
                 type="button"
                 className={`modeTab ${quizMode === 'chordPick' ? 'active' : ''}`}
-                onClick={() => {
-                  if (quizState.kind === 'finished') {
-                    setResultFreshForAgainStart(false)
-                    setProblemSettingsOpen(true)
-                  } else if (quizState.kind === 'idle') {
-                    setProblemSettingsOpen(true)
-                  } else {
-                    setProblemSettingsOpen((v) => !v)
-                  }
-                  setQuizMode('chordPick')
-                }}
+                onClick={() => handleModeTabClick('chordPick')}
                 role="tab"
                 aria-selected={quizMode === 'chordPick'}
               >
@@ -996,9 +978,7 @@ function App() {
                           value={quizInlineText}
                           onChange={(e) => setQuizInlineText(e.target.value)}
                           rows={5}
-                          placeholder={
-                            '入力された問題文をランダムに出題します。\n使用文字: ドデレリミファフィソサラチシ\n１行＝１問'
-                          }
+                          placeholder={UI_PLACEHOLDERS.quizFreeTextarea}
                           aria-label="問題テキスト（自由入力）"
                         />
                       </label>
@@ -1014,9 +994,7 @@ function App() {
                           value={chordPickText}
                           onChange={(e) => setChordPickText(e.target.value)}
                           rows={2}
-                          placeholder={
-                            '入力した構成音の順番を入れ替えて、全パターン出題します。（含む転回形）'
-                          }
+                          placeholder={UI_PLACEHOLDERS.quizChordPickTextarea}
                           aria-label="問題テキスト（構成音）"
                         />
                       </label>
@@ -1058,129 +1036,70 @@ function App() {
 
                 {quizMode === 'random' && (
                   <>
-                    <button
-                      type="button"
-                      className="filterToggle"
-                      onClick={() => setRandomFiltersOpen((o) => !o)}
-                      aria-expanded={randomFiltersOpen}
-                    >
-                      {randomFiltersOpen ? '▲' : '▼'} フィルタ
-                    </button>
-                    {randomFiltersOpen && (
-                      <>
-                        <div className="settingsRow">
-                          <label className="keySelect">
-                            <span>開始音</span>
-                            <select
-                              value={startPcFilter}
-                              onChange={(e) => {
-                                const v = e.target.value
-                                setStartPcFilter(v === '' ? '' : Number(v))
-                              }}
-                            >
-                              <option value="">指定なし</option>
-                              <option value={0}>ド</option>
-                              <option value={1}>デ</option>
-                              <option value={2}>レ</option>
-                              <option value={3}>リ</option>
-                              <option value={4}>ミ</option>
-                              <option value={5}>ファ</option>
-                              <option value={6}>フィ</option>
-                              <option value={7}>ソ</option>
-                              <option value={8}>サ</option>
-                              <option value={9}>ラ</option>
-                              <option value={10}>チ</option>
-                              <option value={11}>シ</option>
-                            </select>
-                          </label>
-                          <label className="keySelect">
-                            <span>最終音</span>
-                            <select
-                              value={lastPcFilter}
-                              onChange={(e) => {
-                                const v = e.target.value
-                                setLastPcFilter(v === '' ? '' : Number(v))
-                              }}
-                            >
-                              <option value="">指定なし</option>
-                              <option value={0}>ド</option>
-                              <option value={1}>デ</option>
-                              <option value={2}>レ</option>
-                              <option value={3}>リ</option>
-                              <option value={4}>ミ</option>
-                              <option value={5}>ファ</option>
-                              <option value={6}>フィ</option>
-                              <option value={7}>ソ</option>
-                              <option value={8}>サ</option>
-                              <option value={9}>ラ</option>
-                              <option value={10}>チ</option>
-                              <option value={11}>シ</option>
-                            </select>
-                          </label>
-                        </div>
-                        <div className="settingsRow">
-                          <label className="keySelect">
-                            <span>音数</span>
-                            <select
-                              value={noteCountFilter}
-                              onChange={(e) => setNoteCountFilter(Number(e.target.value))}
-                            >
-                              {[1, 2, 3, 4, 5, 6].map((n) => (
-                                <option key={n} value={n}>
-                                  {n}音
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
-                        <div className="settingsRow questionCountRow">
-                          <span className="keySelect questionCountLabel">
-                            <span>出題数</span>
-                            <span className="numberStepper">
-                              <button
-                                type="button"
-                                className="stepBtn"
-                                aria-label="出題数を減らす"
-                                disabled={questionCount <= 1}
-                                onClick={() =>
-                                  setQuestionCount((c) => Math.max(1, c - 1))
-                                }
-                              >
-                                −
-                              </button>
-                              <input
-                                type="number"
-                                className="stepInput"
-                                min={1}
-                                max={questionCountMax}
-                                value={questionCount}
-                                onChange={(e) => {
-                                  const v = parseInt(e.target.value, 10)
-                                  if (Number.isNaN(v)) return
-                                  setQuestionCount(
-                                    Math.min(questionCountMax, Math.max(1, v)),
-                                  )
-                                }}
-                              />
-                              <button
-                                type="button"
-                                className="stepBtn"
-                                aria-label="出題数を増やす"
-                                disabled={questionCount >= questionCountMax}
-                                onClick={() =>
-                                  setQuestionCount((c) =>
-                                    Math.min(questionCountMax, c + 1),
-                                  )
-                                }
-                              >
-                                ＋
-                              </button>
-                            </span>
-                            <span className="countLabel slashMax">/ 15問</span>
-                          </span>
-                        </div>
-                      </>
-                    )}
+                    <div className="settingsRow randomEndpointRow">
+                      <label className="keySelect randomEndpointLabel">
+                        <span>開始音</span>
+                        <input
+                          type="text"
+                          className="randomEndpointInput"
+                          value={randomStartText}
+                          placeholder={UI_PLACEHOLDERS.randomStartEnd}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-label="開始音"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.preventDefault()
+                          }}
+                          onChange={(e) =>
+                            setRandomStartText(
+                              e.target.value.replace(/\r/g, '').replace(/\n/g, ''),
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="keySelect randomEndpointLabel">
+                        <span>終止音</span>
+                        <input
+                          type="text"
+                          className="randomEndpointInput"
+                          value={randomEndText}
+                          placeholder={UI_PLACEHOLDERS.randomStartEnd}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-label="終止音"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.preventDefault()
+                          }}
+                          onChange={(e) =>
+                            setRandomEndText(
+                              e.target.value.replace(/\r/g, '').replace(/\n/g, ''),
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="settingsRow randomMiddleRow">
+                      <label className="keySelect randomMiddleLabel">
+                        <span>途中音</span>
+                        <input
+                          type="text"
+                          className="randomMiddleInput"
+                          value={randomMiddleText}
+                          placeholder={UI_PLACEHOLDERS.randomMiddle}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-label="途中音（音符・・*・ー・↑↓）"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.preventDefault()
+                          }}
+                          onChange={(e) =>
+                            setRandomMiddleText(
+                              e.target.value.replace(/\r/g, '').replace(/\n/g, ''),
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
                     <div className="settingsRow">
                       <label className="check">
                         <input
@@ -1196,7 +1115,39 @@ function App() {
                           checked={randomLimitLeap}
                           onChange={(e) => setRandomLimitLeap(e.target.checked)}
                         />
-                        <span>跳躍をオクターブ以下に固定</span>
+                        <span>跳躍をオクターブ以下にする</span>
+                      </label>
+                    </div>
+                    <div className="settingsRow questionCountRow chordPickCountRow">
+                      <label className="keySelect chordPickCountLabel">
+                        <span className="chordPickCountTitle">出題数</span>
+                        <input
+                          type="range"
+                          className="chordPickCountBar countBar"
+                          min={1}
+                          max={Math.max(1, randomMelodyPoolSize)}
+                          value={
+                            randomMelodyPoolSize === 0
+                              ? 1
+                              : Math.min(questionCount, randomMelodyPoolSize)
+                          }
+                          onChange={(e) =>
+                            setQuestionCount(
+                              Math.min(
+                                randomMelodyPoolSize,
+                                Math.max(1, Number(e.target.value)),
+                              ),
+                            )
+                          }
+                          disabled={randomMelodyPoolSize === 0}
+                          aria-label="出題数"
+                        />
+                        <span className="countLabel chordPickCountSlash">
+                          {randomMelodyPoolSize === 0
+                            ? '0'
+                            : Math.min(questionCount, randomMelodyPoolSize)}{' '}
+                          / {randomMelodyPoolSize}問
+                        </span>
                       </label>
                     </div>
                   </>
@@ -1217,7 +1168,9 @@ function App() {
                         </button>
                       </div>
                       {freeInputHelpOpen && (
-                        <div className="editorHelp freeInputHelpExpand">{freeInputHelpDetail}</div>
+                        <div className="editorHelp freeInputHelpExpand quizHelpPanel">
+                          <QuizModeHelpPanel mode="free" />
+                        </div>
                       )}
                     </>
                   )}
@@ -1235,13 +1188,33 @@ function App() {
                         </button>
                       </div>
                       {chordPickHelpOpen && (
-                        <div className="editorHelp freeInputHelpExpand">
-                          休符と伸ばし棒も音符の一種として扱われますが、先頭に来た時は何もしません。
+                        <div className="editorHelp freeInputHelpExpand quizHelpPanel">
+                          <QuizModeHelpPanel mode="chord" />
                         </div>
                       )}
                     </>
                   )}
-                  {quizMode === 'random' && <div className="startButtonTopSpacer" aria-hidden />}
+                  {quizMode === 'random' && (
+                    <>
+                      <div className="quizTextActions">
+                        <button
+                          type="button"
+                          className="helpHintChar"
+                          onClick={() => setRandomMelodyHelpOpen((o) => !o)}
+                          aria-expanded={randomMelodyHelpOpen}
+                          aria-label="開始音・終始音指定の説明を表示"
+                        >
+                          ？
+                        </button>
+                      </div>
+                      {randomMelodyHelpOpen && (
+                        <div className="editorHelp freeInputHelpExpand quizHelpPanel">
+                          <QuizModeHelpPanel mode="random" />
+                        </div>
+                      )}
+                      <div className="startButtonTopSpacer" aria-hidden />
+                    </>
+                  )}
                 </div>
 
                 <div className="settingsRow settingsStartRow">

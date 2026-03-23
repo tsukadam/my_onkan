@@ -26,8 +26,9 @@ function isDownChar(ch: string) {
 }
 
 /**
- * 音符・休符・伸ばし（ー）を独立トークンとして切り出す。ーは直前音にマージしない。
+ * 音符・休符・伸ばし（ー）を独立トークンとして切り出す。
  * 各音符に「直前の音に最も近い」ルールで絶対音高を付与。
+ * 順列は groupChordPickTokens で「音符＋直後のー・　」を1ユニットにまとめてから行う。
  */
 export function tokenizeChordPickLine(line: string): { ok: true; tokens: ChordTok[]; refMidis: number[] } | { ok: false; error: string } {
   const text = line.replace(/\r/g, '')
@@ -104,6 +105,43 @@ export function tokenizeChordPickLine(line: string): { ok: true; tokens: ChordTo
   return { ok: true, tokens, refMidis }
 }
 
+/** 順列の単位: 音符 + 直後に続く ー・　（連続もまとめて直前の音に付く） */
+export type ChordGroup = {
+  note: Extract<ChordTok, { kind: 'note' }>
+  tail: Array<Extract<ChordTok, { kind: 'rest' | 'extend' }>>
+}
+
+export function groupChordPickTokens(tokens: ChordTok[]): ChordGroup[] {
+  const groups: ChordGroup[] = []
+  let i = 0
+  while (i < tokens.length) {
+    const t = tokens[i]!
+    if (t.kind === 'extend' || t.kind === 'rest') {
+      i += 1
+      continue
+    }
+    if (t.kind !== 'note') {
+      i += 1
+      continue
+    }
+    const note = t
+    i += 1
+    const tail: ChordGroup['tail'] = []
+    while (i < tokens.length) {
+      const u = tokens[i]!
+      if (u.kind === 'note') break
+      if (u.kind === 'extend' || u.kind === 'rest') {
+        tail.push(u)
+        i += 1
+      } else {
+        break
+      }
+    }
+    groups.push({ note, tail })
+  }
+  return groups
+}
+
 function permutationsIndices(n: number): number[][] {
   const idx = Array.from({ length: n }, (_, i) => i)
   function rec(arr: number[]): number[][] {
@@ -147,35 +185,37 @@ function inKeyboard(m: number): boolean {
   return m >= KB_MIN && m <= KB_MAX
 }
 
-/** トークン列から再生用 ParsedStep を組み立てる */
-function buildStepsFromTokenOrder(
+/** グループ順序から再生用 ParsedStep を組み立てる */
+function buildStepsFromGroupOrder(
   order: number[],
-  allTokens: ChordTok[],
+  groups: ChordGroup[],
   voiceMidis: number[],
 ): ParsedStep[] {
   const steps: ParsedStep[] = []
 
-  for (const ti of order) {
-    const tok = allTokens[ti]!
-    if (tok.kind === 'rest') {
-      steps.push({ kind: 'rest', quarters: 1, raw: tok.raw })
-    } else if (tok.kind === 'extend') {
-      for (let s = steps.length - 1; s >= 0; s--) {
-        const prev = steps[s]!
-        if (prev.kind === 'note') {
-          prev.quarters += 1
-          break
+  for (const gi of order) {
+    const g = groups[gi]!
+    const tok = g.note
+    const m = voiceMidis[tok.voiceIndex]!
+    steps.push({
+      kind: 'note',
+      pc: tok.pc,
+      midi: m,
+      quarters: 1,
+      raw: 'R',
+    })
+    for (const tr of g.tail) {
+      if (tr.kind === 'extend') {
+        for (let s = steps.length - 1; s >= 0; s--) {
+          const prev = steps[s]!
+          if (prev.kind === 'note') {
+            prev.quarters += 1
+            break
+          }
         }
+      } else {
+        steps.push({ kind: 'rest', quarters: 1, raw: tr.raw })
       }
-    } else {
-      const m = voiceMidis[tok.voiceIndex]!
-      steps.push({
-        kind: 'note',
-        pc: tok.pc,
-        midi: m,
-        quarters: 1,
-        raw: 'R',
-      })
     }
   }
 
@@ -208,16 +248,14 @@ function stepsDedupeKey(steps: ParsedStep[]): string {
 }
 
 /** 成績・ログ用: 順列どおりに音符・休符・伸ばし（ー）を並べた表記 */
-function displayStringForOrder(order: number[], tokens: ChordTok[]): string {
+function displayStringForGroupOrder(order: number[], groups: ChordGroup[]): string {
   let s = ''
-  for (const ti of order) {
-    const tok = tokens[ti]!
-    if (tok.kind === 'note') {
-      s += normalizedToKatakana([tok.pc])
-    } else if (tok.kind === 'rest') {
-      s += tok.raw
-    } else {
-      s += 'ー'
+  for (const gi of order) {
+    const g = groups[gi]!
+    s += normalizedToKatakana([g.note.pc])
+    for (const tr of g.tail) {
+      if (tr.kind === 'extend') s += 'ー'
+      else s += tr.raw
     }
   }
   return s
@@ -228,7 +266,9 @@ export function buildChordPickPoolForLine(line: string): PoolItem[] {
   if (!parsed.ok) return []
 
   const { tokens, refMidis } = parsed
-  const nTok = tokens.length
+  const groups = groupChordPickTokens(tokens)
+  if (groups.length < 2) return []
+
   const nNote = refMidis.length
 
   const minMidi = Math.min(...refMidis)
@@ -237,7 +277,7 @@ export function buildChordPickPoolForLine(line: string): PoolItem[] {
     if (refMidis[vi]! > minMidi) shiftableVoices.push(vi)
   }
 
-  const perms = permutationsIndices(nTok)
+  const perms = permutationsIndices(groups.length)
   const masks = allBoolMasks(shiftableVoices.length)
   const seen = new Set<string>()
   const out: PoolItem[] = []
@@ -246,7 +286,7 @@ export function buildChordPickPoolForLine(line: string): PoolItem[] {
     const voiceMidis = applyOctaveMask(refMidis, shiftableVoices, mask)
 
     for (const perm of perms) {
-      const steps = buildStepsFromTokenOrder(perm, tokens, voiceMidis)
+      const steps = buildStepsFromGroupOrder(perm, groups, voiceMidis)
       const noteMidis = steps.filter((s): s is Extract<ParsedStep, { kind: 'note' }> => s.kind === 'note').map((s) => s.midi)
       if (noteMidis.length > 0 && !noteMidis.every(inKeyboard)) continue
 
@@ -255,7 +295,7 @@ export function buildChordPickPoolForLine(line: string): PoolItem[] {
       seen.add(key)
 
       const answerPcs = stepsToAnswerPcs(steps)
-      const raw = displayStringForOrder(perm, tokens)
+      const raw = displayStringForGroupOrder(perm, groups)
 
       out.push({
         raw,

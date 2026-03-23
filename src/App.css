@@ -380,6 +380,78 @@
   white-space: nowrap;
 }
 
+.randomEndpointRow {
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.randomEndpointLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.randomEndpointLabel > span:first-child {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* .keySelect input の広い画面用 min-width(220px) を打ち消し、開始/終了はコンパクトに */
+.randomEndpointRow .randomEndpointLabel input.randomEndpointInput {
+  min-width: 0 !important;
+  width: 5.5em;
+  flex: 0 0 auto;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (min-width: 480px) {
+  .randomEndpointRow .randomEndpointLabel input.randomEndpointInput {
+    min-width: 0 !important;
+    width: 5.5em;
+  }
+}
+
+.randomEndpointInput {
+  width: 5.5em;
+  max-width: 100%;
+  font: 13px/1.2 var(--mono);
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.randomMiddleRow {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.randomMiddleLabel {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.randomMiddleInput {
+  flex: 1 1 auto;
+  min-width: 80px;
+  font: 13px/1.2 var(--mono);
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
 .startBtn {
   font: 14px/1.2 var(--sans);
   padding: 10px 20px;
@@ -807,6 +879,27 @@
   margin-top: 6px;
   font: 12px/1.5 var(--mono);
   color: #9ca3af;
+  white-space: pre-wrap;
+}
+
+.quizHelpPanel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.quizHelpCommon {
+  white-space: pre-wrap;
+}
+
+/* 固有説明の下に続く汎用の前だけ区切り線 */
+.quizHelpCommonWithSepAbove {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.quizHelpMode {
   white-space: pre-wrap;
 }
 

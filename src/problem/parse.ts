@@ -72,6 +72,11 @@ export function parseProblemLine(line: string): ParseResult {
     if (isRestChar(ch)) {
       // ↑↓ が休符に付いている場合は無視（次の音へ持ち越さない）
       pendingShift = 0
+      // いままでに音符が1つもなければ、先頭の　などは無視
+      if (!steps.some((st) => st.kind === 'note')) {
+        i += 1
+        continue
+      }
       steps.push({ kind: 'rest', quarters: 1, raw: ch })
       i += 1
       continue
@@ -80,11 +85,20 @@ export function parseProblemLine(line: string): ParseResult {
     if (isExtendChar(ch)) {
       // ↑↓ が伸ばしに付いている場合は無視（次の音へ持ち越さない）
       pendingShift = 0
-      const last = steps.at(-1)
-      if (!last || last.kind !== 'note') {
-        return { ok: false, error: '伸ばし（－）が音符の前にあります。' }
+      // 直前の「音符」にマージ（休符を挟んでもよい）
+      let merged = false
+      for (let s = steps.length - 1; s >= 0; s--) {
+        const prev = steps[s]!
+        if (prev.kind === 'note') {
+          prev.quarters += 1
+          merged = true
+          break
+        }
       }
-      last.quarters += 1
+      if (!merged) {
+        i += 1
+        continue
+      }
       i += 1
       continue
     }
