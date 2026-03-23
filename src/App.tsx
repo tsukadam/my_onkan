@@ -73,6 +73,7 @@ function toneNoteNameIfMidiOnVisibleKeyboard(midi: number): string | null {
  * 次の再生（回答の再生など）との重なりを避ける目的で余裕を取る。
  */
 const AUDIO_TAIL_SEC = 0.75
+const ADS_RUNTIME_SRC = `${import.meta.env.BASE_URL}ads.runtime.js`
 
 function buildKeyboard(range: { from: number; to: number }): PianoKey[] {
   // MIDI: 既定は C3..C5（VISIBLE_KEYBOARD_MIDI）
@@ -220,6 +221,24 @@ function App() {
 
   useEffect(() => {
     void loadAllStats().then(setCumulative)
+  }, [])
+
+  // 広告コード本体はリポジトリに置かず、配置されたときだけ実行する。
+  useEffect(() => {
+    if (document.querySelector(`script[data-ads-runtime="${ADS_RUNTIME_SRC}"]`)) return
+    const s = document.createElement('script')
+    s.src = ADS_RUNTIME_SRC
+    s.async = true
+    s.defer = true
+    s.setAttribute('data-ads-runtime', ADS_RUNTIME_SRC)
+    s.onerror = () => {
+      // GitHub など配置していない環境では 404 が正常。
+    }
+    document.body.appendChild(s)
+    return () => {
+      // 画面切替で二重ロードしないため、App unmount 時のみ後始末。
+      if (s.parentNode) s.parentNode.removeChild(s)
+    }
   }, [])
 
   useEffect(() => {
@@ -1069,6 +1088,7 @@ function App() {
           )}
 
         </section>
+        <div id="ad-footer-slot" className="footerAdSlot" />
         <div className="footerLinks">
           <a href="https://aramugi.com" target="_blank" rel="noreferrer">
             あらむぎ

@@ -915,6 +915,12 @@
   font-size: 13px;
 }
 
+.footerAdSlot {
+  width: min(920px, 100%);
+  margin-top: 10px;
+  min-height: 0;
+}
+
 .footerLinks a {
   color: #9ca3af;
   text-decoration: none;
