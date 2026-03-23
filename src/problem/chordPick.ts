@@ -1,36 +1,54 @@
-import { parseEditorTextToQuestions } from '../db/editorText'
-import { NOTE_TOKENS, type ParsedStep } from './parse'
-import { normalizedToKatakana } from './normalize'
+import { parseEditorTextToQuestions } from './editorText'
+import type { ParsedStep } from './parse'
+import { normalizeForJudgement, normalizedToKatakana } from './normalize'
 import type { PoolItem } from '../problems/pool'
+import {
+  KEYBOARD_MIDI_MAX,
+  KEYBOARD_MIDI_MIN,
+  PARSED_NOTE_RAW_PLACEHOLDER,
+  isNotationExtendDash,
+  isNotationOctaveDown,
+  isNotationOctaveUp,
+  isNotationRestChar,
+  isNotationWildcardStar,
+  matchLongestNoteTokenAt,
+  midiForNearGuideInMelody,
+} from './noteTokens'
 
-/** 鍵盤表示範囲 C3..C5 */
-const KB_MIN = 48
-const KB_MAX = 72
+/**
+ * 構成音モード: 行内の * ＊ を、パースの直前にランダムな1文字カナ（0〜11PC）へ置換する。
+ * 1行につき各 * は1回だけ決定し、その後は通常の構成音と同じ（順列・転回）。
+ */
+export function resolveChordPickWildcards(line: string): string {
+  let out = ''
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!
+    if (isNotationWildcardStar(ch)) {
+      const pc = Math.floor(Math.random() * 12)
+      out += normalizedToKatakana([pc])
+    } else {
+      out += ch
+    }
+  }
+  return out
+}
+
+const KB_MIN = KEYBOARD_MIDI_MIN
+const KB_MAX = KEYBOARD_MIDI_MAX
 
 type ChordTok =
   | { kind: 'note'; pc: number; voiceIndex: number }
   | { kind: 'rest'; raw: string }
   | { kind: 'extend' }
 
-function isRestChar(ch: string) {
-  return ch === ' ' || ch === '　'
-}
-function isExtendChar(ch: string) {
-  return ch === '-' || ch === '－' || ch === 'ー'
-}
-function isUpChar(ch: string) {
-  return ch === '↑'
-}
-function isDownChar(ch: string) {
-  return ch === '↓'
-}
-
 /**
- * 音符・休符・伸ばし（ー）を独立トークンとして切り出す。
+ * 構成音モード: 音符・休符・伸ばし（ー）を独立トークンとして切り出す。
  * 各音符に「直前の音に最も近い」ルールで絶対音高を付与。
  * 順列は groupChordPickTokens で「音符＋直後のー・　」を1ユニットにまとめてから行う。
  */
-export function tokenizeChordPickLine(line: string): { ok: true; tokens: ChordTok[]; refMidis: number[] } | { ok: false; error: string } {
+export function parseChordPickConstituentLine(
+  line: string,
+): { ok: true; tokens: ChordTok[]; refMidis: number[] } | { ok: false; error: string } {
   const text = line.replace(/\r/g, '')
   if (!/[^\s　]/.test(text)) return { ok: false, error: '空行です。' }
 
@@ -46,47 +64,63 @@ export function tokenizeChordPickLine(line: string): { ok: true; tokens: ChordTo
   while (i < text.length) {
     const ch = text[i] ?? ''
 
-    if (isUpChar(ch)) {
+    if (isNotationOctaveUp(ch)) {
       pendingShift += 1
       i += 1
       continue
     }
-    if (isDownChar(ch)) {
+    if (isNotationOctaveDown(ch)) {
       pendingShift -= 1
       i += 1
       continue
     }
 
-    if (isRestChar(ch)) {
+    if (isNotationWildcardStar(ch)) {
+      // ＊: ランダム音は「見えてる鍵盤範囲（KB_MIN..KB_MAX）」に収める。
+      // ↑↓ が付いている場合も同様に範囲内へクランプする（音は鳴るが青鍵盤は範囲外に出ない）。
+      const pc0 = Math.floor(Math.random() * 12)
+      const opts: number[] = []
+      for (let m = KB_MIN; m <= KB_MAX; m++) {
+        const pc = ((m % 12) + 12) % 12
+        if (pc === pc0) opts.push(m)
+      }
+      let midi = opts[Math.floor(Math.random() * opts.length)]!
+      if (pendingShift !== 0) {
+        midi += 12 * pendingShift
+        midi = Math.max(KB_MIN, Math.min(KB_MAX, midi))
+      }
+
+      const npc = ((midi % 12) + 12) % 12
+      refMidis[voiceIndex] = midi
+      tokens.push({ kind: 'note', pc: npc, voiceIndex })
+      guideMidi = midi
+      isFirstNote = false
+      pendingShift = 0
+      voiceIndex += 1
+      i += 1
+      continue
+    }
+
+    if (isNotationRestChar(ch)) {
       pendingShift = 0
       tokens.push({ kind: 'rest', raw: ch })
       i += 1
       continue
     }
 
-    if (isExtendChar(ch)) {
+    if (isNotationExtendDash(ch)) {
       pendingShift = 0
       tokens.push({ kind: 'extend' })
       i += 1
       continue
     }
 
-    const candidates = NOTE_TOKENS.filter((t) => text.startsWith(t.token, i))
-    if (candidates.length === 0) {
+    const tok = matchLongestNoteTokenAt(text, i)
+    if (!tok) {
       return { ok: false, error: `未知のトークン: 「${text.slice(i, i + 4)}…」` }
     }
-    candidates.sort((a, b) => b.token.length - a.token.length)
-    const tok = candidates[0]!
     const pc = ((tok.semitone % 12) + 12) % 12
-
-    let midi: number
-    if (isFirstNote && pendingShift === 0) {
-      midi = 60 + pc
-    } else {
-      const k = Math.round((guideMidi - pc) / 12)
-      midi = pc + 12 * k
-    }
-    if (pendingShift !== 0) midi += 12 * pendingShift
+    const midi = midiForNearGuideInMelody(pc, guideMidi, isFirstNote, pendingShift)
 
     refMidis[voiceIndex] = midi
     tokens.push({ kind: 'note', pc, voiceIndex })
@@ -181,10 +215,6 @@ function allBoolMasks(k: number): boolean[][] {
   return out
 }
 
-function inKeyboard(m: number): boolean {
-  return m >= KB_MIN && m <= KB_MAX
-}
-
 /** グループ順序から再生用 ParsedStep を組み立てる */
 function buildStepsFromGroupOrder(
   order: number[],
@@ -202,7 +232,7 @@ function buildStepsFromGroupOrder(
       pc: tok.pc,
       midi: m,
       quarters: 1,
-      raw: 'R',
+      raw: PARSED_NOTE_RAW_PLACEHOLDER,
     })
     for (const tr of g.tail) {
       if (tr.kind === 'extend') {
@@ -220,21 +250,6 @@ function buildStepsFromGroupOrder(
   }
 
   return steps
-}
-
-/** 先頭の休符・伸ばし（未使用のー）を除いた音符のPC列（解答用） */
-function stepsToAnswerPcs(steps: ParsedStep[]): number[] {
-  const pcs: number[] = []
-  let seenNote = false
-  for (const s of steps) {
-    if (s.kind === 'note') {
-      seenNote = true
-      pcs.push(((s.pc % 12) + 12) % 12)
-    } else if (s.kind === 'rest') {
-      if (!seenNote) continue
-    }
-  }
-  return pcs
 }
 
 function stepsDedupeKey(steps: ParsedStep[]): string {
@@ -262,7 +277,7 @@ function displayStringForGroupOrder(order: number[], groups: ChordGroup[]): stri
 }
 
 export function buildChordPickPoolForLine(line: string): PoolItem[] {
-  const parsed = tokenizeChordPickLine(line)
+  const parsed = parseChordPickConstituentLine(line)
   if (!parsed.ok) return []
 
   const { tokens, refMidis } = parsed
@@ -287,14 +302,11 @@ export function buildChordPickPoolForLine(line: string): PoolItem[] {
 
     for (const perm of perms) {
       const steps = buildStepsFromGroupOrder(perm, groups, voiceMidis)
-      const noteMidis = steps.filter((s): s is Extract<ParsedStep, { kind: 'note' }> => s.kind === 'note').map((s) => s.midi)
-      if (noteMidis.length > 0 && !noteMidis.every(inKeyboard)) continue
-
       const key = stepsDedupeKey(steps)
       if (seen.has(key)) continue
       seen.add(key)
 
-      const answerPcs = stepsToAnswerPcs(steps)
+      const answerPcs = normalizeForJudgement(steps).notes
       const raw = displayStringForGroupOrder(perm, groups)
 
       out.push({

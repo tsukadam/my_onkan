@@ -1,26 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Tone from 'tone'
 import { getAudioEngine } from './audio/engine'
-import type { ProblemSet } from './problems/registry'
-import { buildPool, shufflePool, type PoolItem } from './problems/pool'
+import { buildFreeInputPool, shufflePool, type PoolItem } from './problems/pool'
 import { normalizedToKatakana } from './problem/normalize'
-import { bumpStats, type StatsStore } from './stats/storage'
+import { bumpStats, normalizeKeyForCumulativeStats, type StatsStore } from './stats/storage'
 import { loadAllStats, saveAllStats } from './db/stats'
-import {
-  deleteProblemSet,
-  getProblemSet,
-  listAllProblemSets,
-  listProblemSets,
-  putProblemSet,
-  replaceAllProblemSets,
-} from './db/problemSets'
-import { formatProblemSetToEditorText, parseEditorTextToQuestions } from './db/editorText'
 import { buildChordPickPoolFromEditorText } from './problem/chordPick'
-import { buildRandomMelodyPool } from './problem/randomMelody'
-import { QuizModeHelpPanel, UI_PLACEHOLDERS } from './quizHelp'
+import { buildFixedEndPool } from './problem/fixedEnd'
+import { ChordPickQuizSettings } from './ChordPickQuizSettings'
+import { FixedEndQuizSettings } from './FixedEndQuizSettings'
+import { FreeQuizSettings } from './FreeQuizSettings'
+import { KEYBOARD_MIDI_MAX, KEYBOARD_MIDI_MIN } from './problem/noteTokens'
+import { USER_SETTINGS_HELP_TEXT } from './quizHelp'
+import { loadUserSettings, saveUserSettings, type UserSettingsStore } from './db/userSettings'
 import './App.css'
 
-type QuizMode = 'free' | 'random' | 'chordPick'
+type QuizMode = 'free' | 'fixedEnd' | 'chordPick'
 
 type PianoKey = {
   note: string
@@ -58,8 +53,29 @@ const KEY_TO_SEMITONES: Record<(typeof KEY_OPTIONS)[number]['id'], number> = {
   B: 11,
 }
 
+/** 画面ピアノと出題パースの「鍵盤内」（`noteTokens` の KEYBOARD_MIDI_* と一致） */
+const VISIBLE_KEYBOARD_MIDI = { from: KEYBOARD_MIDI_MIN, to: KEYBOARD_MIDI_MAX } as const
+
+/** 再生・照合用: MIDI → Tone の音名（例 60 → "C4"） */
+function midiToToneNoteName(midi: number): string {
+  return Tone.Frequency(midi, 'midi').toNote()
+}
+
+/** 可視鍵盤上なら Tone 音名、範囲外は null（青鍵ハイライト用） */
+function toneNoteNameIfMidiOnVisibleKeyboard(midi: number): string | null {
+  if (midi < VISIBLE_KEYBOARD_MIDI.from || midi > VISIBLE_KEYBOARD_MIDI.to) return null
+  return midiToToneNoteName(midi)
+}
+
+/**
+ * `attackRelease(..., durationSeconds * 0.95)` で音を鳴らしているが、
+ * `engine.ts` のシンセ側エンベロープでは release が 0.7s 残るため、
+ * 次の再生（回答の再生など）との重なりを避ける目的で余裕を取る。
+ */
+const AUDIO_TAIL_SEC = 0.75
+
 function buildKeyboard(range: { from: number; to: number }): PianoKey[] {
-  // MIDI note numbers: C3=48, C5=72
+  // MIDI: 既定は C3..C5（VISIBLE_KEYBOARD_MIDI）
   const result: PianoKey[] = []
   let whiteCount = 0
 
@@ -93,15 +109,16 @@ function App() {
     useState<(typeof KEY_OPTIONS)[number]['id']>('C')
   const [quizInlineText, setQuizInlineText] = useState('')
   const [freeInputHelpOpen, setFreeInputHelpOpen] = useState(false)
-  const [randomStartText, setRandomStartText] = useState('')
-  const [randomEndText, setRandomEndText] = useState('')
-  const [randomMiddleText, setRandomMiddleText] = useState('')
+  const [fixedEndStartText, setFixedEndStartText] = useState('')
+  const [fixedEndEndText, setFixedEndEndText] = useState('')
+  const [fixedEndMiddleText, setFixedEndMiddleText] = useState('')
   const [quizMode, setQuizMode] = useState<QuizMode>('free')
   const [chordPickText, setChordPickText] = useState('')
   const [chordPickHelpOpen, setChordPickHelpOpen] = useState(false)
-  const [randomMelodyHelpOpen, setRandomMelodyHelpOpen] = useState(false)
-  const [randomNoBlack, setRandomNoBlack] = useState(true)
-  const [randomLimitLeap, setRandomLimitLeap] = useState(true)
+  const [fixedEndHelpOpen, setFixedEndHelpOpen] = useState(false)
+  /** 白鍵のみ（黒鍵 PC を途中の候補から外す） */
+  const [fixedEndWhiteKeysOnly, setFixedEndWhiteKeysOnly] = useState(true)
+  const [fixedEndLimitLeapToOctave, setFixedEndLimitLeapToOctave] = useState(true)
   const [questionCount, setQuestionCount] = useState<number>(10)
   const [questionIntervalSec, setQuestionIntervalSec] = useState<2 | 3 | 4 | 5>(2)
   const [tempoBpm, setTempoBpm] = useState<50 | 60 | 70 | 80 | 90 | 100 | 110 | 120>(80)
@@ -121,7 +138,9 @@ function App() {
   /** 構成音モードで「入室時の出題数デフォルト」を一度だけ適用したか */
   const chordPickDefaultsAppliedRef = useRef(false)
   /** 開始音・終始音指定モードで出題数デフォルトを一度だけ適用したか */
-  const randomMelodyDefaultsAppliedRef = useRef(false)
+  const fixedEndDefaultsAppliedRef = useRef(false)
+  const chordPickSavedQuestionCountRef = useRef(10)
+  const fixedEndSavedQuestionCountRef = useRef(10)
 
   /** 出題モードタブ: 解答中は同一タブで開閉トグル、別モードへ切替時は開く（折りたたみ後に他モードへ切替なら再オープン） */
   const handleModeTabClick = useCallback(
@@ -156,7 +175,6 @@ function App() {
   }, [quizState.kind])
 
   const [cycleQueue, setCycleQueue] = useState<number[]>([])
-  const [cyclePos, setCyclePos] = useState(0)
   const [presentCount, setPresentCount] = useState(0)
   const currentPoolRef = useRef<PoolItem[]>([])
 
@@ -166,198 +184,60 @@ function App() {
     Array<{ kind: 'note'; pc: number; midi: number; quarters: number; raw: string } | { kind: 'rest'; quarters: number; raw: string }>
   >([])
   const [expectedNotes, setExpectedNotes] = useState<number[]>([])
+  // いま処理中の問題情報は ref にも保持する（setState の反映タイミングずれで
+  // revealAndAdvance 側が空を掴むのを防ぐ）。
+  const currentQuestionRawRef = useRef(currentQuestionRaw)
+  const currentBpmRef = useRef(currentBpm)
+  const currentStepsRef = useRef(currentSteps)
+  const expectedNotesRef = useRef(expectedNotes)
   const [inputNotes, setInputNotes] = useState<Array<{ pc: number; wrong: boolean }>>([])
   const [answerNotes, setAnswerNotes] = useState<number[]>([])
 
   const [keyMark, setKeyMark] = useState<Record<string, 'correct' | 'wrong'>>({})
   const [blueKeys, setBlueKeys] = useState<Set<string>>(() => new Set())
 
-  const [sessionLog, setSessionLog] = useState<Array<{ q: string; ok: boolean; answered: string; expected: string }>>([])
+  const [sessionLog, setSessionLog] = useState<
+    Array<{ questionText: string; ok: boolean; answered: string; expected: string }>
+  >([])
   const [cumulative, setCumulative] = useState<StatsStore>(() => ({}))
 
   const pendingTimers = useRef<number[]>([])
+  // cyclePos/cycleQueue は state だが、非同期（setTimeout）内でクロージャが古くなると
+  // 「次の問題がズレる/進行が止まる」原因になるので ref を正にする。
+  const cycleQueueRef = useRef<number[]>([])
+  const cyclePosRef = useRef(0)
+  const startCurrentQuestionRef = useRef<(queue: number[], pos: number) => Promise<void>>(async () => {})
+  const questionTokenRef = useRef(0)
+  const revealStartedRef = useRef(false)
+  const presentationDoneRef = useRef(false)
+  const questionSettledRef = useRef(false)
+  const pendingRevealRef = useRef<null | { isCorrect: boolean }>(null)
 
   const clearTimers = useCallback(() => {
     for (const t of pendingTimers.current) window.clearTimeout(t)
     pendingTimers.current = []
   }, [])
 
-  const [userProblemSets, setUserProblemSets] = useState<ProblemSet[]>([])
-
-  // Editor UI state
-  const [showEditorInUserSettings, setShowEditorInUserSettings] = useState(false)
-  const [editorSelectedTitle, setEditorSelectedTitle] = useState<string>('__new__')
-  const [editorTitle, setEditorTitle] = useState('')
-  const [editorBody, setEditorBody] = useState('')
-  const importInputRef = useRef<HTMLInputElement | null>(null)
-
-  const editorNewHelp = useMemo(
-    () =>
-      [
-        '使用可能文字: ドデレリミファフィソサラチシ',
-        'オクターブ違いの同名音は、直前の音に最も近い音が選ばれます。',
-        '音名の前に↑や↓をつけるとオクターブを上下できます。',
-        ' ',
-        '全角/半角スペースで休符',
-        '伸ばし棒（ー）で音値を伸ばす',
-      ].join('\n'),
-    [],
-  )
-
-  const refreshUserSets = useCallback(async () => {
-    const list = await listProblemSets()
-    const loaded: ProblemSet[] = []
-    for (const row of list) {
-      const full = await getProblemSet(row.title)
-      if (!full) continue
-      const questions = [...full.questions].sort((a, b) => a.id - b.id).map((q) => q.text)
-      loaded.push({
-        meta: {
-          id: `user:${full.title}`,
-          title: full.title,
-          filename: 'IndexedDB',
-        },
-        questions,
-      })
-    }
-    setUserProblemSets(loaded.sort((a, b) => a.meta.title.localeCompare(b.meta.title)))
-  }, [])
-
-  useEffect(() => {
-    void refreshUserSets()
-  }, [refreshUserSets])
-
   useEffect(() => {
     void loadAllStats().then(setCumulative)
   }, [])
 
-  const loadEditorSelection = useCallback(
-    async (title: string) => {
-      setEditorSelectedTitle(title)
-      if (title === '__new__') {
-        setEditorTitle('')
-        setEditorBody('')
-        return
+  useEffect(() => {
+    void loadUserSettings().then((saved) => {
+      const chordCount = saved.chordPickQuestionCount
+      const fixedCount = saved.fixedEndQuestionCount
+      chordPickSavedQuestionCountRef.current =
+        typeof chordCount === 'number' && Number.isFinite(chordCount) ? Math.max(1, Math.floor(chordCount)) : 10
+      fixedEndSavedQuestionCountRef.current =
+        typeof fixedCount === 'number' && Number.isFinite(fixedCount) ? Math.max(1, Math.floor(fixedCount)) : 10
+      if (typeof saved.fixedEndWhiteKeysOnly === 'boolean') setFixedEndWhiteKeysOnly(saved.fixedEndWhiteKeysOnly)
+      if (typeof saved.fixedEndLimitLeapToOctave === 'boolean') {
+        setFixedEndLimitLeapToOctave(saved.fixedEndLimitLeapToOctave)
       }
-      const set = await getProblemSet(title)
-      if (!set) {
-        setEditorTitle(title)
-        setEditorBody('')
-        return
-      }
-      setEditorTitle(set.title)
-      setEditorBody(formatProblemSetToEditorText(set))
-    },
-    [editorNewHelp],
-  )
-
-  const handleEditorSave = useCallback(async () => {
-    let title = editorTitle.trim()
-    if (!title) {
-      const d = new Date()
-      const pad = (n: number) => String(n).padStart(2, '0')
-      title = `問題セット ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
-    }
-
-    const parsed = parseEditorTextToQuestions(editorBody)
-    if (parsed.validLines.length === 0) {
-      window.alert('有効な行がありません。保存しませんでした。')
-      return
-    }
-
-    const questions = parsed.validLines.map((text, idx) => ({ id: idx + 1, text }))
-    await putProblemSet({ title, questions })
-    await refreshUserSets()
-
-    const ignored = parsed.ignoredLines.length
-    window.alert(
-      `保存しました。\nタイトル: ${title}\n保存行: ${parsed.validLines.length}\n無視行: ${ignored}`,
-    )
-
-    await loadEditorSelection(title)
-  }, [editorBody, editorTitle, loadEditorSelection, refreshUserSets])
-
-  const handleEditorDelete = useCallback(async () => {
-    const title = editorSelectedTitle === '__new__' ? '' : editorSelectedTitle
-    if (!title) return
-    const ok = window.confirm(`「${title}」を削除します。よろしいですか？`)
-    if (!ok) return
-    await deleteProblemSet(title)
-    await refreshUserSets()
-    await loadEditorSelection('__new__')
-    window.alert('削除しました。')
-  }, [deleteProblemSet, editorSelectedTitle, loadEditorSelection, refreshUserSets])
-
-  const handleExportProblemSets = useCallback(async () => {
-    const rows = await listAllProblemSets()
-    const payload = {
-      format: 'myonkan-problemsets',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      problemSets: rows.map((r) => ({
-        title: r.title,
-        questions: [...r.questions].sort((a, b) => a.id - b.id),
-      })),
-    }
-    const json = JSON.stringify(payload, null, 2)
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const ts = new Date()
-    const pad = (n: number) => String(n).padStart(2, '0')
-    a.href = url
-    a.download = `myonkan_problemsets_${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}.json`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-    window.alert(`${payload.problemSets.length}件の問題セットをエクスポートしました。`)
+    })
   }, [])
 
-  const handleImportProblemSets = useCallback(async (file: File) => {
-    const text = await file.text()
-    const raw = JSON.parse(text) as {
-      format?: string
-      version?: number
-      problemSets?: Array<{
-        title?: unknown
-        questions?: Array<{ id?: unknown; text?: unknown }>
-      }>
-    }
-    const input = Array.isArray(raw.problemSets) ? raw.problemSets : []
-    const normalized: Array<{ title: string; questions: Array<{ id: number; text: string }> }> = []
-    for (const s of input) {
-      const title = typeof s.title === 'string' ? s.title.trim() : ''
-      if (!title) continue
-      const questions = Array.isArray(s.questions)
-        ? s.questions
-            .map((q, idx) => {
-              const text = typeof q.text === 'string' ? q.text.trim() : ''
-              const id = typeof q.id === 'number' ? q.id : idx + 1
-              return { id, text }
-            })
-            .filter((q) => q.text.length > 0)
-            .sort((a, b) => a.id - b.id)
-            .map((q, idx) => ({ id: idx + 1, text: q.text }))
-        : []
-      if (questions.length === 0) continue
-      normalized.push({ title, questions })
-    }
-    if (normalized.length === 0) {
-      window.alert('有効な問題セットが見つかりませんでした。')
-      return
-    }
-    const ok = window.confirm(
-      `インポートすると既存の問題セットはすべて削除されます。\n${normalized.length}件を取り込みます。よろしいですか？`,
-    )
-    if (!ok) return
-    await replaceAllProblemSets(normalized)
-    await refreshUserSets()
-    await loadEditorSelection('__new__')
-    window.alert(`${normalized.length}件の問題セットをインポートしました。`)
-  }, [loadEditorSelection, refreshUserSets])
-
-  const keys = useMemo(() => buildKeyboard({ from: 48, to: 72 }), [])
+  const keys = useMemo(() => buildKeyboard(VISIBLE_KEYBOARD_MIDI), [])
   const whiteKeys = useMemo(() => keys.filter((k) => !k.isBlack), [keys])
   const blackKeys = useMemo(() => keys.filter((k) => k.isBlack), [keys])
   const transposeSemitones = useMemo(() => KEY_TO_SEMITONES[currentKey], [currentKey])
@@ -377,20 +257,14 @@ function App() {
     setBlueKeys(new Set())
   }, [clearTimers])
 
-  const keyForMidiIfVisible = useCallback((midi: number) => {
-    // keyboard is C3..C5 (48..72). 範囲外は表示しない（null）
-    if (midi < 48 || midi > 72) return null
-    return Tone.Frequency(midi, 'midi').toNote()
-  }, [])
+  const keyForMidiIfVisible = useCallback(
+    (midi: number) => toneNoteNameIfMidiOnVisibleKeyboard(midi),
+    [],
+  )
 
   const pool = useMemo(() => {
     if (quizMode !== 'free') return []
-    const { validLines } = parseEditorTextToQuestions(quizInlineText)
-    const synthetic: ProblemSet = {
-      meta: { id: 'inline', title: 'inline', filename: 'inline' },
-      questions: validLines,
-    }
-    return buildPool([synthetic], 'inline', null, null, null)
+    return buildFreeInputPool(quizInlineText)
   }, [quizMode, quizInlineText])
 
   const chordPickPool = useMemo(
@@ -398,38 +272,34 @@ function App() {
     [quizMode, chordPickText],
   )
 
-  const randomMelodyPool = useMemo(
+  const fixedEndPool = useMemo(
     () =>
-      quizMode === 'random'
-        ? buildRandomMelodyPool({
-            startText: randomStartText,
-            endText: randomEndText,
-            middleText: randomMiddleText,
-            noBlack: randomNoBlack,
-            limitLeap: randomLimitLeap,
+      quizMode === 'fixedEnd'
+        ? buildFixedEndPool({
+            startText: fixedEndStartText,
+            endText: fixedEndEndText,
+            middleText: fixedEndMiddleText,
+            noBlack: fixedEndWhiteKeysOnly,
+            limitLeap: fixedEndLimitLeapToOctave,
           })
         : [],
-    [quizMode, randomStartText, randomEndText, randomMiddleText, randomNoBlack, randomLimitLeap],
+    [
+      quizMode,
+      fixedEndStartText,
+      fixedEndEndText,
+      fixedEndMiddleText,
+      fixedEndWhiteKeysOnly,
+      fixedEndLimitLeapToOctave,
+    ],
   )
 
   const poolSize = pool.length
   const chordPickPoolSize = chordPickPool.length
-  const randomMelodyPoolSize = randomMelodyPool.length
-
-  const effectiveQuestionCount =
-    quizMode === 'random'
-      ? randomMelodyPoolSize === 0
-        ? 1
-        : Math.min(Math.max(1, questionCount), randomMelodyPoolSize)
-      : quizMode === 'chordPick'
-        ? chordPickPoolSize === 0
-          ? 1
-          : Math.min(Math.max(1, questionCount), chordPickPoolSize)
-        : poolSize
+  const fixedEndPoolSize = fixedEndPool.length
 
   const canStart =
-    quizMode === 'random'
-      ? randomMelodyPoolSize > 0
+    quizMode === 'fixedEnd'
+      ? fixedEndPoolSize > 0
       : quizMode === 'free'
         ? poolSize > 0
         : chordPickPoolSize > 0
@@ -447,8 +317,8 @@ function App() {
     if (quizMode === 'chordPick' && prevQuizModeRef.current !== 'chordPick') {
       chordPickDefaultsAppliedRef.current = false
     }
-    if (quizMode === 'random' && prevQuizModeRef.current !== 'random') {
-      randomMelodyDefaultsAppliedRef.current = false
+    if (quizMode === 'fixedEnd' && prevQuizModeRef.current !== 'fixedEnd') {
+      fixedEndDefaultsAppliedRef.current = false
     }
     prevQuizModeRef.current = quizMode
   }, [quizMode])
@@ -457,39 +327,73 @@ function App() {
     if (quizMode !== 'chordPick') return
     if (chordPickPoolSize === 0) return
     const max = chordPickPoolSize
-    const defaultCount = max <= 10 ? max : 10
 
     if (!chordPickDefaultsAppliedRef.current) {
       chordPickDefaultsAppliedRef.current = true
-      setQuestionCount(defaultCount)
+      setQuestionCount(Math.max(1, Math.min(chordPickSavedQuestionCountRef.current, max)))
       return
     }
 
     setQuestionCount((prev) => {
-      const clamped = Math.min(prev, max)
-      if (max <= 10) return max
-      return Math.max(1, clamped)
+      return Math.max(1, Math.min(prev, max))
     })
   }, [quizMode, chordPickPoolSize])
 
   useEffect(() => {
-    if (quizMode !== 'random') return
-    if (randomMelodyPoolSize === 0) return
-    const max = randomMelodyPoolSize
-    const defaultCount = max <= 10 ? max : 10
+    if (quizMode !== 'fixedEnd') return
+    if (fixedEndPoolSize === 0) return
+    const max = fixedEndPoolSize
 
-    if (!randomMelodyDefaultsAppliedRef.current) {
-      randomMelodyDefaultsAppliedRef.current = true
-      setQuestionCount(defaultCount)
+    if (!fixedEndDefaultsAppliedRef.current) {
+      fixedEndDefaultsAppliedRef.current = true
+      setQuestionCount(Math.max(1, Math.min(fixedEndSavedQuestionCountRef.current, max)))
       return
     }
 
     setQuestionCount((prev) => {
-      const clamped = Math.min(prev, max)
-      if (max <= 10) return max
-      return Math.max(1, clamped)
+      return Math.max(1, Math.min(prev, max))
     })
-  }, [quizMode, randomMelodyPoolSize])
+  }, [quizMode, fixedEndPoolSize])
+
+  const saveModeSettings = useCallback((patch: Partial<UserSettingsStore>) => {
+    void loadUserSettings().then((cur) => saveUserSettings({ ...cur, ...patch }))
+  }, [])
+
+  const handleChordPickQuestionCountChange = useCallback(
+    (n: number) => {
+      const normalized = Math.max(1, Math.floor(n))
+      setQuestionCount(normalized)
+      chordPickSavedQuestionCountRef.current = normalized
+      saveModeSettings({ chordPickQuestionCount: normalized })
+    },
+    [saveModeSettings],
+  )
+
+  const handleFixedEndQuestionCountChange = useCallback(
+    (n: number) => {
+      const normalized = Math.max(1, Math.floor(n))
+      setQuestionCount(normalized)
+      fixedEndSavedQuestionCountRef.current = normalized
+      saveModeSettings({ fixedEndQuestionCount: normalized })
+    },
+    [saveModeSettings],
+  )
+
+  const handleFixedEndWhiteKeysOnlyChange = useCallback(
+    (v: boolean) => {
+      setFixedEndWhiteKeysOnly(v)
+      saveModeSettings({ fixedEndWhiteKeysOnly: v })
+    },
+    [saveModeSettings],
+  )
+
+  const handleFixedEndLimitLeapToOctaveChange = useCallback(
+    (v: boolean) => {
+      setFixedEndLimitLeapToOctave(v)
+      saveModeSettings({ fixedEndLimitLeapToOctave: v })
+    },
+    [saveModeSettings],
+  )
 
   const pickQuestionAt = useCallback((pos: number, queue: number[]) => {
     const items = currentPoolRef.current
@@ -500,6 +404,11 @@ function App() {
     setCurrentBpm(tempoBpm)
     setCurrentSteps(q.steps as any)
     setExpectedNotes(q.normalizedNotes)
+    // UI 用 state と別に、制御用 ref も即時更新する（setState の反映待ちをしない）
+    currentQuestionRawRef.current = q.raw
+    currentBpmRef.current = tempoBpm
+    currentStepsRef.current = q.steps as any
+    expectedNotesRef.current = q.normalizedNotes
     return { raw: q.raw, bpm: tempoBpm, steps: q.steps, normalizedNotes: q.normalizedNotes }
   }, [tempoBpm])
 
@@ -511,14 +420,14 @@ function App() {
       onNote?: (pc: number, midi: number, atSeconds: number) => void
     }) => {
       // 解答欄/青鍵盤の更新は setTimeout で行っているため、
-      // 直前フェーズのタイマーが残っていると「混入バグ」になる。ここで必ず止める。
+      // 直前フェーズのタイマーが残っていると「混入バグ」になる。ここで止める。
       clearTimers()
       const quarterSec = 60 / opts.bpm
       let t = 0
       for (const step of opts.steps) {
         const durSeconds = step.quarters * quarterSec
         if (step.kind === 'note') {
-          const relNote = Tone.Frequency(step.midi, 'midi').toNote()
+          const relNote = midiToToneNoteName(step.midi)
           const at = Tone.now() + t
           await engine.attackRelease(relNote, durSeconds * 0.95, transposeSemitones, at)
 
@@ -541,80 +450,168 @@ function App() {
     [clearTimers, engine, keyForMidiIfVisible, transposeSemitones],
   )
 
+  const revealAndAdvance = useCallback(
+    (isCorrect: boolean, token: number) => {
+      if (token !== questionTokenRef.current) {
+        return
+      }
+      if (revealStartedRef.current) {
+        return
+      }
+      revealStartedRef.current = true
+      setQuizState({ kind: 'revealing' })
+      if (isCorrect) {
+        setAnswerNotes([...expectedNotesRef.current])
+        if (currentStepsRef.current.length > 0) {
+          void scheduleQuestionPlayback({
+            bpm: currentBpmRef.current,
+            steps: currentStepsRef.current,
+            showBlueKeys: true,
+          }).then((total) => {
+            const queueLen = cycleQueueRef.current.length
+            const nextPos = cyclePosRef.current + 1
+            const isLast = nextPos >= queueLen
+            const gapSec = isLast ? 0 : questionIntervalSec
+            const delayMs = Math.floor((total + AUDIO_TAIL_SEC + 0.05 + gapSec) * 1000)
+            const doneId = window.setTimeout(() => {
+              if (token !== questionTokenRef.current) return
+              const queue = cycleQueueRef.current
+              const resolvedNextPos = cyclePosRef.current + 1
+              if (resolvedNextPos >= queue.length) {
+                setQuizState({ kind: 'finished' })
+                return
+              }
+              cyclePosRef.current = resolvedNextPos
+              void startCurrentQuestionRef.current(queue, resolvedNextPos)
+            }, delayMs)
+            pendingTimers.current.push(doneId)
+          })
+        }
+        return
+      }
+
+      setAnswerNotes([])
+      if (currentStepsRef.current.length > 0) {
+        void scheduleQuestionPlayback({
+          bpm: currentBpmRef.current,
+          steps: currentStepsRef.current,
+          showBlueKeys: true,
+          onNote: (pcAt, _midi, atSeconds) => {
+            const id = window.setTimeout(() => {
+              setAnswerNotes((prev) => [...prev, pcAt])
+            }, Math.max(0, Math.floor(atSeconds * 1000)))
+            pendingTimers.current.push(id)
+          },
+        }).then((total) => {
+          const queueLen = cycleQueueRef.current.length
+          const nextPos = cyclePosRef.current + 1
+          const isLast = nextPos >= queueLen
+          const gapSec = isLast ? 0 : questionIntervalSec
+          const delayMs = Math.floor((total + AUDIO_TAIL_SEC + 0.05 + gapSec) * 1000)
+          const doneId = window.setTimeout(() => {
+            if (token !== questionTokenRef.current) return
+            const queue = cycleQueueRef.current
+            const resolvedNextPos = cyclePosRef.current + 1
+            if (resolvedNextPos >= queue.length) {
+              setQuizState({ kind: 'finished' })
+              return
+            }
+            cyclePosRef.current = resolvedNextPos
+            void startCurrentQuestionRef.current(queue, resolvedNextPos)
+          }, delayMs)
+          pendingTimers.current.push(doneId)
+        })
+      }
+    },
+    [
+      questionIntervalSec,
+      scheduleQuestionPlayback,
+    ],
+  )
+
   const startCurrentQuestion = useCallback(
     async (queue: number[], pos: number) => {
       resetPerQuestionUi()
-      setPresentCount((c) => c + 1)
+      const token = ++questionTokenRef.current
+      revealStartedRef.current = false
+      presentationDoneRef.current = false
+      questionSettledRef.current = false
+      pendingRevealRef.current = null
+      if (pos >= queue.length) {
+        setQuizState({ kind: 'finished' })
+        return
+      }
       const q = pickQuestionAt(pos, queue)
       if (!q) {
         setQuizState({ kind: 'finished' })
         return
       }
+      setPresentCount(pos + 1)
       setQuizState({ kind: 'presenting' })
-      await scheduleQuestionPlayback({ bpm: q.bpm, steps: q.steps })
+      void scheduleQuestionPlayback({ bpm: q.bpm, steps: q.steps })
+      const totalQuarters = q.steps.reduce((acc, s) => acc + s.quarters, 0)
+      const presentationMs = Math.floor((totalQuarters * (60 / q.bpm) + AUDIO_TAIL_SEC + 0.05) * 1000)
       const doneId = window.setTimeout(() => {
-        setQuizState({ kind: 'answering' })
-      }, Math.floor((q.steps.reduce((acc, s) => acc + s.quarters, 0) * (60 / q.bpm) + 0.05) * 1000))
+        if (token !== questionTokenRef.current) return
+        presentationDoneRef.current = true
+        const pending = pendingRevealRef.current
+        if (pending) {
+          pendingRevealRef.current = null
+          revealAndAdvance(pending.isCorrect, token)
+          return
+        }
+        if (!questionSettledRef.current) setQuizState({ kind: 'answering' })
+      }, presentationMs)
       pendingTimers.current.push(doneId)
     },
-    [pickQuestionAt, resetPerQuestionUi, scheduleQuestionPlayback],
+    [pickQuestionAt, resetPerQuestionUi, revealAndAdvance, scheduleQuestionPlayback],
   )
+
+  useEffect(() => {
+    startCurrentQuestionRef.current = startCurrentQuestion
+  }, [startCurrentQuestion])
 
   const handleStart = useCallback(() => {
     if (!canStart) return
 
+    // プールは上の useMemo（pool / chordPickPool / fixedEndPool）と同一 — 二重構築しない
     let slice: PoolItem[]
-    if (quizMode === 'random') {
-      const built = buildRandomMelodyPool({
-        startText: randomStartText,
-        endText: randomEndText,
-        middleText: randomMiddleText,
-        noBlack: randomNoBlack,
-        limitLeap: randomLimitLeap,
-      })
+    if (quizMode === 'fixedEnd') {
+      const built = fixedEndPool
       if (built.length === 0) return
       const take = Math.min(Math.max(1, questionCount), built.length)
       slice = shufflePool(built).slice(0, take)
     } else if (quizMode === 'chordPick') {
-      const built = buildChordPickPoolFromEditorText(chordPickText)
+      const built = chordPickPool
       if (built.length === 0) return
       const take = Math.min(Math.max(1, questionCount), built.length)
       slice = shufflePool(built).slice(0, take)
     } else {
-      const { validLines } = parseEditorTextToQuestions(quizInlineText)
-      const synthetic: ProblemSet = {
-        meta: { id: 'inline', title: 'inline', filename: 'inline' },
-        questions: validLines,
-      }
-      const built = buildPool([synthetic], 'inline', null, null, null)
+      const built = pool
       if (built.length === 0) return
       slice = shufflePool(built)
     }
 
     currentPoolRef.current = slice
-    setCycleQueue(Array.from({ length: slice.length }, (_, i) => i))
-    setCyclePos(0)
+    const queue = Array.from({ length: slice.length }, (_, i) => i)
+    setCycleQueue(queue)
+    cycleQueueRef.current = queue
+    cyclePosRef.current = 0
     setPresentCount(0)
     setSessionLog([])
     setQuizState({ kind: 'presenting' })
     void startCurrentQuestion(
-      Array.from({ length: slice.length }, (_, i) => i),
+      queue,
       0,
     )
   }, [
     canStart,
-    effectiveQuestionCount,
-    quizInlineText,
-    questionCount,
-    randomEndText,
-    randomLimitLeap,
-    randomMiddleText,
-    randomNoBlack,
-    randomStartText,
-    chordPickText,
     quizMode,
+    questionCount,
+    pool,
+    chordPickPool,
+    fixedEndPool,
     startCurrentQuestion,
-    tempoBpm,
   ])
 
   const noteOn = useCallback(
@@ -640,118 +637,88 @@ function App() {
 
   const handleAnswerKey = useCallback(
     (relativeNote: string) => {
-      if (quizState.kind !== 'answering') return
+      if (quizState.kind !== 'presenting' && quizState.kind !== 'answering') {
+        return
+      }
+      if (questionSettledRef.current) {
+        return
+      }
 
       const pc = ((Tone.Frequency(relativeNote).toMidi() ?? 0) % 12 + 12) % 12
       const nextIndex = inputNotes.length
-      const expectedPc = expectedNotes[nextIndex]
+      const expectedPc = expectedNotesRef.current[nextIndex]
 
-      if (expectedPc === undefined) return
+      if (expectedPc === undefined) {
+        return
+      }
 
       if (pc === expectedPc) {
         const answeredPcs = [...inputNotes.map((n) => n.pc), pc]
         setInputNotes((prev) => [...prev, { pc, wrong: false }])
         setKeyMark((prev) => ({ ...prev, [relativeNote]: 'correct' }))
 
-        if (nextIndex + 1 === expectedNotes.length) {
-          // 正解 → 即時で全鍵盤を青にし、解答文字も一括表示。その後再生のみ（青は増やさない）
+        if (nextIndex + 1 === expectedNotesRef.current.length) {
+          questionSettledRef.current = true
           setSessionLog((prev) => [
             ...prev,
             {
-              q: currentQuestionRaw,
+              questionText: currentQuestionRawRef.current,
               ok: true,
               answered: normalizedToKatakana(answeredPcs),
-              expected: normalizedToKatakana(expectedNotes),
+              expected: normalizedToKatakana(expectedNotesRef.current),
             },
           ])
           setCumulative((prev) => {
-            const next = bumpStats(prev, currentQuestionRaw, true)
+            const next = bumpStats(
+              prev,
+              normalizeKeyForCumulativeStats(currentQuestionRawRef.current),
+              true,
+            )
             void saveAllStats(next)
             return next
           })
-
-          setQuizState({ kind: 'revealing' })
-          setAnswerNotes([...expectedNotes])
-
-          if (currentSteps.length > 0) {
-            void scheduleQuestionPlayback({
-              bpm: currentBpm,
-              steps: currentSteps,
-              showBlueKeys: true,
-            }).then((total) => {
-              const nextPos = cyclePos + 1
-              const doneId = window.setTimeout(() => {
-                if (nextPos >= cycleQueue.length) {
-                  setQuizState({ kind: 'finished' })
-                  return
-                }
-                setCyclePos(nextPos)
-                void startCurrentQuestion(cycleQueue, nextPos)
-              }, Math.floor((total + 0.2 + (nextPos >= cycleQueue.length ? 0 : questionIntervalSec)) * 1000))
-              pendingTimers.current.push(doneId)
-            })
+          if (presentationDoneRef.current) {
+            revealAndAdvance(true, questionTokenRef.current)
+          } else {
+            pendingRevealRef.current = { isCorrect: true }
           }
         }
         return
       }
 
       // wrong: lock question, replay and reveal
+      questionSettledRef.current = true
       const answeredPcs = [...inputNotes.map((n) => n.pc), pc]
       setInputNotes((prev) => [...prev, { pc, wrong: true }])
       setKeyMark((prev) => ({ ...prev, [relativeNote]: 'wrong' }))
-      setQuizState({ kind: 'revealing' })
-      setAnswerNotes([])
       setSessionLog((prev) => [
         ...prev,
         {
-          q: currentQuestionRaw,
+          questionText: currentQuestionRawRef.current,
           ok: false,
           answered: normalizedToKatakana(answeredPcs),
-          expected: normalizedToKatakana(expectedNotes),
+          expected: normalizedToKatakana(expectedNotesRef.current),
         },
       ])
       setCumulative((prev) => {
-        const next = bumpStats(prev, currentQuestionRaw, false)
+        const next = bumpStats(
+          prev,
+          normalizeKeyForCumulativeStats(currentQuestionRawRef.current),
+          false,
+        )
         void saveAllStats(next)
         return next
       })
-
-      if (currentSteps.length > 0) {
-        void scheduleQuestionPlayback({
-          bpm: currentBpm,
-          steps: currentSteps,
-          showBlueKeys: true,
-          onNote: (pcAt, _midi, atSeconds) => {
-            const id = window.setTimeout(() => {
-              setAnswerNotes((prev) => [...prev, pcAt])
-            }, Math.max(0, Math.floor(atSeconds * 1000)))
-            pendingTimers.current.push(id)
-          },
-        }).then((total) => {
-          const doneId = window.setTimeout(() => {
-            const nextPos = cyclePos + 1
-            if (nextPos >= cycleQueue.length) {
-              setQuizState({ kind: 'finished' })
-              return
-            }
-            setCyclePos(nextPos)
-            void startCurrentQuestion(cycleQueue, nextPos)
-          }, Math.floor((total + 0.2 + (cyclePos + 1 >= cycleQueue.length ? 0 : questionIntervalSec)) * 1000))
-          pendingTimers.current.push(doneId)
-        })
+      if (presentationDoneRef.current) {
+        revealAndAdvance(false, questionTokenRef.current)
+      } else {
+        pendingRevealRef.current = { isCorrect: false }
       }
     },
     [
-      currentBpm,
-      currentQuestionRaw,
-      cyclePos,
-      cycleQueue,
-      expectedNotes,
       inputNotes.length,
       quizState.kind,
-      scheduleQuestionPlayback,
-      startCurrentQuestion,
-      questionIntervalSec,
+      revealAndAdvance,
     ],
   )
 
@@ -764,17 +731,11 @@ function App() {
         <div className="headerBtns">
           <button
             type="button"
-            className="homeBtn"
-            onClick={() => setView('game')}
-            aria-label="Home"
-          >
-            ⌂
-          </button>
-          <button
-            type="button"
-            className="gearBtn"
+            className={`gearBtn${view === 'user' ? ' gearBtnOn' : ''}`}
             onClick={() => setView((v) => (v === 'user' ? 'game' : 'user'))}
-            aria-label="Settings"
+            aria-label="設定"
+            aria-pressed={view === 'user'}
+            title="設定"
           >
             ⚙
           </button>
@@ -786,23 +747,7 @@ function App() {
           <div className="userSettingsPanel">
             <div className="settingsRow">
               <label className="keySelect">
-                <span>出題間隔</span>
-                <select
-                  value={questionIntervalSec}
-                  onChange={(e) =>
-                    setQuestionIntervalSec(
-                      Number(e.target.value) as 2 | 3 | 4 | 5,
-                    )
-                  }
-                >
-                  <option value={2}>2秒</option>
-                  <option value={3}>3秒</option>
-                  <option value={4}>4秒</option>
-                  <option value={5}>5秒</option>
-                </select>
-              </label>
-              <label className="keySelect">
-                <span>現在のキー</span>
+                <span>キー</span>
                 <select
                   value={currentKey}
                   onChange={(e) =>
@@ -818,9 +763,31 @@ function App() {
                   ))}
                 </select>
               </label>
-              <label className="keySelect">
+            </div>
+            <div className="settingsRow userSliderRow">
+              <label className="keySelect userSliderLabel">
+                <span>出題間隔</span>
+                <input
+                  type="range"
+                  className="countBar"
+                  min={2}
+                  max={5}
+                  step={1}
+                  value={questionIntervalSec}
+                  onChange={(e) => setQuestionIntervalSec(Number(e.target.value) as 2 | 3 | 4 | 5)}
+                />
+                <span className="countLabel">{questionIntervalSec}秒</span>
+              </label>
+            </div>
+            <div className="settingsRow userSliderRow">
+              <label className="keySelect userSliderLabel">
                 <span>テンポ</span>
-                <select
+                <input
+                  type="range"
+                  className="countBar"
+                  min={50}
+                  max={120}
+                  step={10}
                   value={tempoBpm}
                   onChange={(e) =>
                     setTempoBpm(
@@ -835,108 +802,12 @@ function App() {
                         | 120,
                     )
                   }
-                >
-                  <option value={50}>50</option>
-                  <option value={60}>60</option>
-                  <option value={70}>70</option>
-                  <option value={80}>80</option>
-                  <option value={90}>90</option>
-                  <option value={100}>100</option>
-                  <option value={110}>110</option>
-                  <option value={120}>120</option>
-                </select>
-              </label>
-            </div>
-            <div className="settingsRow globalSettings">
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={showEditorInUserSettings}
-                  onChange={(e) => setShowEditorInUserSettings(e.target.checked)}
                 />
-                <span>問題セット編集を表示</span>
+                <span className="countLabel">{tempoBpm}</span>
               </label>
             </div>
-            {showEditorInUserSettings && (
-              <div className="editor userSettingsEditor">
-                <div className="editorRow">
-                  <label className="keySelect">
-                    <span>読み込み</span>
-                    <select
-                      value={editorSelectedTitle}
-                      onChange={(e) => void loadEditorSelection(e.target.value)}
-                    >
-                      <option value="__new__">新規作成</option>
-                      {userProblemSets.map((s) => (
-                        <option key={s.meta.title} value={s.meta.title}>
-                          {s.meta.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button type="button" className="startBtn" onClick={() => void handleEditorSave()}>
-                    保存
-                  </button>
-                  <button
-                    type="button"
-                    className="startBtn"
-                    onClick={() => void handleEditorDelete()}
-                    disabled={editorSelectedTitle === '__new__'}
-                  >
-                    削除
-                  </button>
-                </div>
-                <div className="editorRow">
-                  <label className="keySelect editorTitle">
-                    <span>タイトル</span>
-                    <input
-                      value={editorTitle}
-                      onChange={(e) => setEditorTitle(e.target.value)}
-                      placeholder={UI_PLACEHOLDERS.editorProblemSetTitle}
-                    />
-                  </label>
-                </div>
-                <div className="editorRow">
-                  <label className="editorBody">
-                    <span>内容（1行=1問）</span>
-                    <textarea
-                      value={editorBody}
-                      onChange={(e) => setEditorBody(e.target.value)}
-                      rows={8}
-                    />
-                  </label>
-                  <div className="editorHelp">{editorNewHelp}</div>
-                </div>
-                <div className="editorRow">
-                  <button type="button" className="startBtn" onClick={() => void handleExportProblemSets()}>
-                    エクスポート
-                  </button>
-                  <button type="button" className="startBtn" onClick={() => importInputRef.current?.click()}>
-                    インポート
-                  </button>
-                  <input
-                    ref={importInputRef}
-                    type="file"
-                    accept="application/json,.json"
-                    className="fileInputHidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      e.currentTarget.value = ''
-                      if (!file) return
-                      void handleImportProblemSets(file).catch(() => {
-                        window.alert('インポートに失敗しました。JSON形式を確認してください。')
-                      })
-                    }}
-                  />
-                </div>
-                <div className="editorRow">
-                  <div className="editorHelp">
-                    ブラウザ側で保存されている全ての問題セットをエクスポート/インポートできます。
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
+          <div className="userSettingsHelpPlain">{USER_SETTINGS_HELP_TEXT}</div>
           <div className="quizGameControls">
             <div className="modeTabs" role="tablist" aria-label="mode">
               <button
@@ -946,16 +817,16 @@ function App() {
                 role="tab"
                 aria-selected={quizMode === 'free'}
               >
-                自由入力
+                手入力
               </button>
               <button
                 type="button"
-                className={`modeTab ${quizMode === 'random' ? 'active' : ''}`}
-                onClick={() => handleModeTabClick('random')}
+                className={`modeTab ${quizMode === 'fixedEnd' ? 'active' : ''}`}
+                onClick={() => handleModeTabClick('fixedEnd')}
                 role="tab"
-                aria-selected={quizMode === 'random'}
+                aria-selected={quizMode === 'fixedEnd'}
               >
-                開始音・終止音指定
+                指定＋ランダム
               </button>
               <button
                 type="button"
@@ -970,252 +841,46 @@ function App() {
 
             {problemSettingsOpen && (
               <div className="settings">
-                {quizMode === 'free' && (
-                  <>
-                    <div className="quizTextBlock">
-                      <label className="editorBody editorBodyNoLabel">
-                        <textarea
-                          value={quizInlineText}
-                          onChange={(e) => setQuizInlineText(e.target.value)}
-                          rows={5}
-                          placeholder={UI_PLACEHOLDERS.quizFreeTextarea}
-                          aria-label="問題テキスト（自由入力）"
-                        />
-                      </label>
-                    </div>
-                  </>
-                )}
+                {quizMode === 'free' ? (
+                  <FreeQuizSettings
+                    text={quizInlineText}
+                    onTextChange={setQuizInlineText}
+                    helpOpen={freeInputHelpOpen}
+                    onHelpOpenToggle={() => setFreeInputHelpOpen((o) => !o)}
+                  />
+                ) : null}
 
-                {quizMode === 'chordPick' && (
-                  <>
-                    <div className="quizTextBlock">
-                      <label className="editorBody editorBodyNoLabel">
-                        <textarea
-                          value={chordPickText}
-                          onChange={(e) => setChordPickText(e.target.value)}
-                          rows={2}
-                          placeholder={UI_PLACEHOLDERS.quizChordPickTextarea}
-                          aria-label="問題テキスト（構成音）"
-                        />
-                      </label>
-                    </div>
-                    <div className="settingsRow questionCountRow chordPickCountRow">
-                      <label className="keySelect chordPickCountLabel">
-                        <span className="chordPickCountTitle">出題数</span>
-                        <input
-                          type="range"
-                          className="chordPickCountBar countBar"
-                          min={1}
-                          max={Math.max(1, chordPickPoolSize)}
-                          value={
-                            chordPickPoolSize === 0
-                              ? 1
-                              : Math.min(questionCount, chordPickPoolSize)
-                          }
-                          onChange={(e) =>
-                            setQuestionCount(
-                              Math.min(
-                                chordPickPoolSize,
-                                Math.max(1, Number(e.target.value)),
-                              ),
-                            )
-                          }
-                          disabled={chordPickPoolSize === 0}
-                          aria-label="出題数"
-                        />
-                        <span className="countLabel chordPickCountSlash">
-                          {chordPickPoolSize === 0
-                            ? '0'
-                            : Math.min(questionCount, chordPickPoolSize)}{' '}
-                          / {chordPickPoolSize}問
-                        </span>
-                      </label>
-                    </div>
-                  </>
-                )}
+                {quizMode === 'chordPick' ? (
+                  <ChordPickQuizSettings
+                    text={chordPickText}
+                    onTextChange={setChordPickText}
+                    poolSize={chordPickPoolSize}
+                    questionCount={questionCount}
+                    onQuestionCountChange={handleChordPickQuestionCountChange}
+                    helpOpen={chordPickHelpOpen}
+                    onHelpOpenToggle={() => setChordPickHelpOpen((o) => !o)}
+                  />
+                ) : null}
 
-                {quizMode === 'random' && (
-                  <>
-                    <div className="settingsRow randomEndpointRow">
-                      <label className="keySelect randomEndpointLabel">
-                        <span>開始音</span>
-                        <input
-                          type="text"
-                          className="randomEndpointInput"
-                          value={randomStartText}
-                          placeholder={UI_PLACEHOLDERS.randomStartEnd}
-                          autoComplete="off"
-                          spellCheck={false}
-                          aria-label="開始音"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') e.preventDefault()
-                          }}
-                          onChange={(e) =>
-                            setRandomStartText(
-                              e.target.value.replace(/\r/g, '').replace(/\n/g, ''),
-                            )
-                          }
-                        />
-                      </label>
-                      <label className="keySelect randomEndpointLabel">
-                        <span>終止音</span>
-                        <input
-                          type="text"
-                          className="randomEndpointInput"
-                          value={randomEndText}
-                          placeholder={UI_PLACEHOLDERS.randomStartEnd}
-                          autoComplete="off"
-                          spellCheck={false}
-                          aria-label="終止音"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') e.preventDefault()
-                          }}
-                          onChange={(e) =>
-                            setRandomEndText(
-                              e.target.value.replace(/\r/g, '').replace(/\n/g, ''),
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
-                    <div className="settingsRow randomMiddleRow">
-                      <label className="keySelect randomMiddleLabel">
-                        <span>途中音</span>
-                        <input
-                          type="text"
-                          className="randomMiddleInput"
-                          value={randomMiddleText}
-                          placeholder={UI_PLACEHOLDERS.randomMiddle}
-                          autoComplete="off"
-                          spellCheck={false}
-                          aria-label="途中音（音符・・*・ー・↑↓）"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') e.preventDefault()
-                          }}
-                          onChange={(e) =>
-                            setRandomMiddleText(
-                              e.target.value.replace(/\r/g, '').replace(/\n/g, ''),
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
-                    <div className="settingsRow">
-                      <label className="check">
-                        <input
-                          type="checkbox"
-                          checked={randomNoBlack}
-                          onChange={(e) => setRandomNoBlack(e.target.checked)}
-                        />
-                        <span>白鍵のみ</span>
-                      </label>
-                      <label className="check">
-                        <input
-                          type="checkbox"
-                          checked={randomLimitLeap}
-                          onChange={(e) => setRandomLimitLeap(e.target.checked)}
-                        />
-                        <span>跳躍をオクターブ以下にする</span>
-                      </label>
-                    </div>
-                    <div className="settingsRow questionCountRow chordPickCountRow">
-                      <label className="keySelect chordPickCountLabel">
-                        <span className="chordPickCountTitle">出題数</span>
-                        <input
-                          type="range"
-                          className="chordPickCountBar countBar"
-                          min={1}
-                          max={Math.max(1, randomMelodyPoolSize)}
-                          value={
-                            randomMelodyPoolSize === 0
-                              ? 1
-                              : Math.min(questionCount, randomMelodyPoolSize)
-                          }
-                          onChange={(e) =>
-                            setQuestionCount(
-                              Math.min(
-                                randomMelodyPoolSize,
-                                Math.max(1, Number(e.target.value)),
-                              ),
-                            )
-                          }
-                          disabled={randomMelodyPoolSize === 0}
-                          aria-label="出題数"
-                        />
-                        <span className="countLabel chordPickCountSlash">
-                          {randomMelodyPoolSize === 0
-                            ? '0'
-                            : Math.min(questionCount, randomMelodyPoolSize)}{' '}
-                          / {randomMelodyPoolSize}問
-                        </span>
-                      </label>
-                    </div>
-                  </>
-                )}
-
-                <div className="settingsHelpAboveStart">
-                  {quizMode === 'free' && (
-                    <>
-                      <div className="quizTextActions">
-                        <button
-                          type="button"
-                          className="helpHintChar"
-                          onClick={() => setFreeInputHelpOpen((o) => !o)}
-                          aria-expanded={freeInputHelpOpen}
-                          aria-label="入力の詳しい説明を表示"
-                        >
-                          ？
-                        </button>
-                      </div>
-                      {freeInputHelpOpen && (
-                        <div className="editorHelp freeInputHelpExpand quizHelpPanel">
-                          <QuizModeHelpPanel mode="free" />
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {quizMode === 'chordPick' && (
-                    <>
-                      <div className="quizTextActions">
-                        <button
-                          type="button"
-                          className="helpHintChar"
-                          onClick={() => setChordPickHelpOpen((o) => !o)}
-                          aria-expanded={chordPickHelpOpen}
-                          aria-label="構成音から生成の説明を表示"
-                        >
-                          ？
-                        </button>
-                      </div>
-                      {chordPickHelpOpen && (
-                        <div className="editorHelp freeInputHelpExpand quizHelpPanel">
-                          <QuizModeHelpPanel mode="chord" />
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {quizMode === 'random' && (
-                    <>
-                      <div className="quizTextActions">
-                        <button
-                          type="button"
-                          className="helpHintChar"
-                          onClick={() => setRandomMelodyHelpOpen((o) => !o)}
-                          aria-expanded={randomMelodyHelpOpen}
-                          aria-label="開始音・終始音指定の説明を表示"
-                        >
-                          ？
-                        </button>
-                      </div>
-                      {randomMelodyHelpOpen && (
-                        <div className="editorHelp freeInputHelpExpand quizHelpPanel">
-                          <QuizModeHelpPanel mode="random" />
-                        </div>
-                      )}
-                      <div className="startButtonTopSpacer" aria-hidden />
-                    </>
-                  )}
-                </div>
+                {quizMode === 'fixedEnd' ? (
+                  <FixedEndQuizSettings
+                    startText={fixedEndStartText}
+                    endText={fixedEndEndText}
+                    middleText={fixedEndMiddleText}
+                    onStartTextChange={setFixedEndStartText}
+                    onEndTextChange={setFixedEndEndText}
+                    onMiddleTextChange={setFixedEndMiddleText}
+                    whiteKeysOnly={fixedEndWhiteKeysOnly}
+                    onWhiteKeysOnlyChange={handleFixedEndWhiteKeysOnlyChange}
+                    limitLeapToOctave={fixedEndLimitLeapToOctave}
+                    onLimitLeapToOctaveChange={handleFixedEndLimitLeapToOctaveChange}
+                    poolSize={fixedEndPoolSize}
+                    questionCount={questionCount}
+                    onQuestionCountChange={handleFixedEndQuestionCountChange}
+                    helpOpen={fixedEndHelpOpen}
+                    onHelpOpenToggle={() => setFixedEndHelpOpen((o) => !o)}
+                  />
+                ) : null}
 
                 <div className="settingsRow settingsStartRow">
                   <button
@@ -1263,7 +928,9 @@ function App() {
           </div>
 
           <div className="qCount">
-            {quizState.kind !== 'idle' ? `${presentCount} / ${cycleQueue.length} 問` : '\u00A0'}
+            {quizState.kind !== 'idle'
+              ? `${presentCount} / ${cycleQueue.length} 問`
+              : '\u00A0'}
           </div>
 
           <div className="keyboardScroll" role="group" aria-label="piano keyboard">
@@ -1359,9 +1026,9 @@ function App() {
                   <h3>今回</h3>
                   <ul>
                     {sessionLog.map((r, idx) => (
-                      <li key={`${idx}-${r.q}`}>
+                      <li key={`${idx}-${r.questionText}`}>
                         <span className={`mark ${r.ok ? 'ok' : 'ng'}`}>{r.ok ? '○' : '×'}</span>
-                        <span className="q">{r.q}</span>
+                        <span className="q">{r.questionText}</span>
                         {!r.ok && <span className="statSession">入力:{r.answered}</span>}
                       </li>
                     ))}
@@ -1371,15 +1038,20 @@ function App() {
                   <h3>累計</h3>
                   <ul>
                     {Object.entries(cumulative)
-                      .filter(([q]) => sessionLog.some((s) => s.q === q))
+                      .filter(([statsKey]) =>
+                        sessionLog.some(
+                          (s) =>
+                            normalizeKeyForCumulativeStats(s.questionText) === statsKey,
+                        ),
+                      )
                       .sort((a, b) => a[0].localeCompare(b[0]))
-                      .map(([q, st]) => {
+                      .map(([statsKey, st]) => {
                         const rate = st.attempts ? Math.round((st.correct / st.attempts) * 100) : 0
                         const rateClass = rate >= 80 ? 'rateGood' : rate <= 20 ? 'rateBad' : 'rateNum'
                         return (
-                          <li key={q}>
+                          <li key={statsKey}>
                             <span className="q">
-                              {q}{' '}
+                              {statsKey}{' '}
                               <span className="rateMeta"> (</span>
                               <span className={rateClass}>
                                 {rate}%

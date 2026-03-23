@@ -12,41 +12,32 @@ export type ParseResult =
   | { ok: true; steps: ParsedStep[] }
   | { ok: false; error: string }
 
-// Minimal starter mapping. Expand this table to match your exact 西塚式（カナで半音）ルール.
-// Current test set only uses: ド/レ/ミ/ソ + 伸ばし/休符
-export const NOTE_TOKENS: Array<{ token: string; semitone: number }> = [
-  { token: 'ド', semitone: 0 },
-  { token: 'レ', semitone: 2 },
-  { token: 'ミ', semitone: 4 },
-  { token: 'ファ', semitone: 5 },
-  { token: 'ソ', semitone: 7 },
-  { token: 'ラ', semitone: 9 },
-  { token: 'シ', semitone: 11 },
+export {
+  KEYBOARD_MIDI_MAX,
+  KEYBOARD_MIDI_MIN,
+  NOTE_TOKENS,
+  matchLongestNoteTokenAt,
+} from './noteTokens'
 
-  // common ASCII/JP sharp variants (optional)
-  { token: 'ド#', semitone: 1 },
-  { token: 'ド＃', semitone: 1 },
-  { token: 'レ#', semitone: 3 },
-  { token: 'レ＃', semitone: 3 },
-  { token: 'ファ#', semitone: 6 },
-  { token: 'ファ＃', semitone: 6 },
-  { token: 'ソ#', semitone: 8 },
-  { token: 'ソ＃', semitone: 8 },
-  { token: 'ラ#', semitone: 10 },
-  { token: 'ラ＃', semitone: 10 },
-  { token: 'デ', semitone: 1 },
-  { token: 'リ', semitone: 3 },
-  { token: 'フィ', semitone: 6 },
-  { token: 'サ', semitone: 8 },
-  { token: 'チ', semitone: 10 },
-]
+import {
+  KEYBOARD_MIDI_MAX,
+  KEYBOARD_MIDI_MIN,
+  isNotationExtendDash,
+  isNotationOctaveDown,
+  isNotationOctaveUp,
+  isNotationRestChar,
+  isNotationWildcardStar,
+  matchLongestNoteTokenAt,
+  midiForNearGuideInMelody,
+} from './noteTokens'
 
-const isRestChar = (ch: string) => ch === ' ' || ch === '　'
-const isExtendChar = (ch: string) => ch === '-' || ch === '－' || ch === 'ー'
-const isUpChar = (ch: string) => ch === '↑'
-const isDownChar = (ch: string) => ch === '↓'
+function randomMidiInKeyboard(): number {
+  const span = KEYBOARD_MIDI_MAX - KEYBOARD_MIDI_MIN + 1
+  return KEYBOARD_MIDI_MIN + Math.floor(Math.random() * span)
+}
 
-export function parseProblemLine(line: string): ParseResult {
+/** 自由入力モード: 1行を `ParsedStep[]` にパース（＊は鍵盤内ランダム MIDI） */
+export function parseFreeInputMelodyLine(line: string): ParseResult {
   const steps: ParsedStep[] = []
 
   let i = 0
@@ -57,19 +48,19 @@ export function parseProblemLine(line: string): ParseResult {
   while (i < line.length) {
     const ch = line[i] ?? ''
 
-    if (isUpChar(ch)) {
+    if (isNotationOctaveUp(ch)) {
       pendingShift += 1
       i += 1
       continue
     }
 
-    if (isDownChar(ch)) {
+    if (isNotationOctaveDown(ch)) {
       pendingShift -= 1
       i += 1
       continue
     }
 
-    if (isRestChar(ch)) {
+    if (isNotationRestChar(ch)) {
       // ↑↓ が休符に付いている場合は無視（次の音へ持ち越さない）
       pendingShift = 0
       // いままでに音符が1つもなければ、先頭の　などは無視
@@ -82,7 +73,7 @@ export function parseProblemLine(line: string): ParseResult {
       continue
     }
 
-    if (isExtendChar(ch)) {
+    if (isNotationExtendDash(ch)) {
       // ↑↓ が伸ばしに付いている場合は無視（次の音へ持ち越さない）
       pendingShift = 0
       // 直前の「音符」にマージ（休符を挟んでもよい）
@@ -103,23 +94,28 @@ export function parseProblemLine(line: string): ParseResult {
       continue
     }
 
-    // match longest token
-    const candidates = NOTE_TOKENS.filter((t) => line.startsWith(t.token, i))
-    if (candidates.length === 0) {
+    if (isNotationWildcardStar(ch)) {
+      // ＊: プール生成時に1回だけ鍵盤内ランダム MIDI。行数は増やさない（1行=1問のまま）。
+      let midi = randomMidiInKeyboard()
+      if (pendingShift !== 0) {
+        midi += 12 * pendingShift
+        midi = Math.max(KEYBOARD_MIDI_MIN, Math.min(KEYBOARD_MIDI_MAX, midi))
+      }
+      const pc = ((midi % 12) + 12) % 12
+      steps.push({ kind: 'note', pc, midi, quarters: 1, raw: ch })
+      guideMidi = midi
+      isFirstNote = false
+      pendingShift = 0
+      i += 1
+      continue
+    }
+
+    const tok = matchLongestNoteTokenAt(line, i)
+    if (!tok) {
       return { ok: false, error: `未知のトークン: 「${line.slice(i, i + 4)}…」` }
     }
-    candidates.sort((a, b) => b.token.length - a.token.length)
-    const tok = candidates[0]!
     const pc = ((tok.semitone % 12) + 12) % 12
-    let midi: number
-
-    if (isFirstNote && pendingShift === 0) {
-      midi = 60 + pc
-    } else {
-      const k = Math.round((guideMidi - pc) / 12)
-      midi = pc + 12 * k
-    }
-    if (pendingShift !== 0) midi += 12 * pendingShift
+    const midi = midiForNearGuideInMelody(pc, guideMidi, isFirstNote, pendingShift)
 
     steps.push({ kind: 'note', pc, midi, quarters: 1, raw: tok.token })
     guideMidi = midi
@@ -130,4 +126,3 @@ export function parseProblemLine(line: string): ParseResult {
 
   return { ok: true, steps }
 }
-

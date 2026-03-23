@@ -1,7 +1,13 @@
+import { parseEditorTextToQuestions } from '../problem/editorText'
 import type { ParsedStep } from '../problem/parse'
-import { parseProblemLine } from '../problem/parse'
-import { normalizeForJudgement } from '../problem/normalize'
-import type { ProblemSet } from './registry'
+import { parseFreeInputMelodyLine } from '../problem/parse'
+import { normalizeForJudgement, stepsToQuizDisplayRaw } from '../problem/normalize'
+
+/** テキストエリア等から得た「1セット分の出題リスト」（ファイル・DB の問題セット機能とは無関係） */
+export type TextQuestionSet = {
+  meta: { id: string; title: string }
+  questions: string[]
+}
 
 export type PoolItem = {
   raw: string
@@ -10,32 +16,24 @@ export type PoolItem = {
   normalizedNotes: number[]
 }
 
-/** 休符・伸ばしを無視した音の数 */
-export function getNoteCount(raw: string): number | null {
-  const r = parseProblemLine(raw)
-  if (!r.ok) return null
-  return normalizeForJudgement(r.steps).notes.length
-}
-
 /**
  * 出題プールを構築する。
- * fileId 指定時: そのファイルの問題を対象にする。
- * fileId 未指定: 全ファイルを対象にする。
+ * setId 指定時: その meta.id のセットだけ対象。
  * noteCount 指定時: 休符/伸ばし無視後の音数で絞る。
  */
 export function buildPool(
-  sets: ProblemSet[],
-  fileId: string,
+  sets: TextQuestionSet[],
+  setId: string | null,
   noteCount: number | null,
   startPc: number | null,
   lastPc: number | null,
 ): PoolItem[] {
   const out: PoolItem[] = []
 
-  const targetSets = fileId ? sets.filter((p) => p.meta.id === fileId) : sets
+  const targetSets = setId ? sets.filter((p) => p.meta.id === setId) : sets
   for (const set of targetSets) {
     for (const raw of set.questions) {
-      const parsed = parseProblemLine(raw)
+      const parsed = parseFreeInputMelodyLine(raw)
       if (!parsed.ok) continue
       const norm = normalizeForJudgement(parsed.steps)
       if (noteCount != null && norm.notes.length !== noteCount) continue
@@ -48,7 +46,7 @@ export function buildPool(
         if (last === undefined || last !== lastPc) continue
       }
       out.push({
-        raw,
+        raw: stepsToQuizDisplayRaw(parsed.steps),
         setId: set.meta.id,
         steps: parsed.steps,
         normalizedNotes: norm.notes,
@@ -57,6 +55,16 @@ export function buildPool(
   }
 
   return out
+}
+
+/** 自由入力モード用: テキストエリアの全文からプールを構築 */
+export function buildFreeInputPool(quizInlineText: string): PoolItem[] {
+  const { validLines } = parseEditorTextToQuestions(quizInlineText)
+  const synthetic: TextQuestionSet = {
+    meta: { id: 'inline', title: 'inline' },
+    questions: validLines,
+  }
+  return buildPool([synthetic], 'inline', null, null, null)
 }
 
 export function shufflePool<T>(arr: T[]): T[] {

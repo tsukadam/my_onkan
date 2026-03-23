@@ -1,15 +1,21 @@
-import type { DbProblemSet } from './problemSets'
+import { EDITOR_ALLOWED_CHAR_SET } from './noteTokens'
 
 export type ParseEditorResult = {
   validLines: string[]
   ignoredLines: Array<{ lineNo: number; content: string; reason: string }>
 }
 
-const allowedLineRegex = /^[ドデレリミファフィソサラチシ↑↓ 　ー－\-]+$/
-
 function isEffectivelyBlank(line: string): boolean {
   // 行内に「音名/記号」が何もなく、空白だけなら無視
   return line.replace(/[ 　]/g, '').length === 0
+}
+
+function lineHasOnlyAllowedChars(line: string): boolean {
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!
+    if (!EDITOR_ALLOWED_CHAR_SET.has(ch)) return false
+  }
+  return true
 }
 
 export function parseEditorTextToQuestions(text: string): ParseEditorResult {
@@ -25,7 +31,7 @@ export function parseEditorTextToQuestions(text: string): ParseEditorResult {
       continue
     }
 
-    if (!allowedLineRegex.test(raw)) {
+    if (!lineHasOnlyAllowedChars(raw)) {
       ignoredLines.push({ lineNo: i + 1, content: raw, reason: '許可されていない文字を含む' })
       continue
     }
@@ -35,9 +41,3 @@ export function parseEditorTextToQuestions(text: string): ParseEditorResult {
 
   return { validLines, ignoredLines }
 }
-
-export function formatProblemSetToEditorText(set: DbProblemSet): string {
-  const sorted = [...set.questions].sort((a, b) => a.id - b.id)
-  return sorted.map((q) => q.text).join('\n')
-}
-

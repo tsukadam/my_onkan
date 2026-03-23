@@ -1,7 +1,7 @@
 import type { StatsStore } from '../stats/storage'
 
 const DB_NAME = 'myonkan'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE = 'stats'
 
 type StatsRow = { questionId: string; attempts: number; correct: number }
@@ -9,8 +9,11 @@ type StatsRow = { questionId: string; attempts: number; correct: number }
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION)
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (ev) => {
       const db = req.result
+      if (ev.oldVersion < 3 && db.objectStoreNames.contains('problemSets')) {
+        db.deleteObjectStore('problemSets')
+      }
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: 'questionId' })
       }
