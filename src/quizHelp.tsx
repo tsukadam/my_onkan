@@ -41,8 +41,6 @@ export const USER_SETTINGS_HELP_TEXT =
   '鍵盤外の音は表示されません。\n' +
   '同名音はどのオクターブで回答しても正解になります。\n' +
   '\n' +
-  '音が鳴らない時は鍵盤を１度押してください。\n'+
-  '\n' +
   'PWA対応しています。スマホでブラウザUIが邪魔な時に。'
 
 export type QuizHelpMode = keyof typeof QUIZ_HELP_MODE_SPECIFIC

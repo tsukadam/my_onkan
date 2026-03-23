@@ -33,88 +33,112 @@ class AudioEngineImpl implements AudioEngine {
   private sampler: Tone.Sampler | null = null
   private synth: Tone.PolySynth | null = null
   private limiter: Tone.Limiter | null = null
+  private startingPromise: Promise<void> | null = null
 
   async ensureReady(): Promise<void> {
     if (this.status.kind === 'ready') return
-    if (this.status.kind === 'starting') return
+    if (this.status.kind === 'starting') {
+      if (this.startingPromise) {
+        await this.startingPromise
+      }
+      return
+    }
 
     this.status = { kind: 'starting' }
-    try {
-      await Tone.start()
-
-      // Output chain
-      if (!this.limiter) {
-        this.limiter = new Tone.Limiter(-6).toDestination()
-      }
-
-      // Prefer PCM sampler (piano). We reference Tone.js' publicly hosted Salamander set.
-      // If network/CORS fails, we fall back to a synth so the app remains usable offline.
-      if (!this.sampler) {
-        const baseUrl = 'https://tonejs.github.io/audio/salamander/'
-        this.sampler = new Tone.Sampler({
-          urls: {
-            A0: 'A0.mp3',
-            C1: 'C1.mp3',
-            'D#1': 'Ds1.mp3',
-            'F#1': 'Fs1.mp3',
-            A1: 'A1.mp3',
-            C2: 'C2.mp3',
-            'D#2': 'Ds2.mp3',
-            'F#2': 'Fs2.mp3',
-            A2: 'A2.mp3',
-            C3: 'C3.mp3',
-            'D#3': 'Ds3.mp3',
-            'F#3': 'Fs3.mp3',
-            A3: 'A3.mp3',
-            C4: 'C4.mp3',
-            'D#4': 'Ds4.mp3',
-            'F#4': 'Fs4.mp3',
-            A4: 'A4.mp3',
-            C5: 'C5.mp3',
-            'D#5': 'Ds5.mp3',
-            'F#5': 'Fs5.mp3',
-            A5: 'A5.mp3',
-            C6: 'C6.mp3',
-            'D#6': 'Ds6.mp3',
-            'F#6': 'Fs6.mp3',
-            A6: 'A6.mp3',
-            C7: 'C7.mp3',
-            'D#7': 'Ds7.mp3',
-            'F#7': 'Fs7.mp3',
-            A7: 'A7.mp3',
-            C8: 'C8.mp3',
-          },
-          baseUrl,
-          release: 1.2,
-        })
-        this.sampler.connect(this.limiter)
-      }
-
+    this.startingPromise = (async () => {
       try {
-        await Tone.loaded()
-        this.status = { kind: 'ready', source: 'sampler' }
-        return
-      } catch {
-        // Continue to fallback
-      }
+        await Tone.start()
 
-      if (!this.synth) {
-        this.synth = new Tone.PolySynth(Tone.Synth, {
-          oscillator: { type: 'triangle' },
-          envelope: { attack: 0.003, decay: 0.2, sustain: 0.08, release: 0.7 },
-        })
-        this.synth.connect(this.limiter)
-      }
+        // Output chain
+        if (!this.limiter) {
+          this.limiter = new Tone.Limiter(-6).toDestination()
+        }
 
-      this.status = {
-        kind: 'error',
-        message: 'PCM音源の読み込みに失敗したため、簡易シンセ音にフォールバックしました。',
-        fallbackSource: 'synth',
+        // Prefer PCM sampler (piano). We reference Tone.js' publicly hosted Salamander set.
+        // If network/CORS fails, we fall back to a synth so the app remains usable offline.
+        if (!this.sampler) {
+          const baseUrl = 'https://tonejs.github.io/audio/salamander/'
+          this.sampler = new Tone.Sampler({
+            urls: {
+              A0: 'A0.mp3',
+              C1: 'C1.mp3',
+              'D#1': 'Ds1.mp3',
+              'F#1': 'Fs1.mp3',
+              A1: 'A1.mp3',
+              C2: 'C2.mp3',
+              'D#2': 'Ds2.mp3',
+              'F#2': 'Fs2.mp3',
+              A2: 'A2.mp3',
+              C3: 'C3.mp3',
+              'D#3': 'Ds3.mp3',
+              'F#3': 'Fs3.mp3',
+              A3: 'A3.mp3',
+              C4: 'C4.mp3',
+              'D#4': 'Ds4.mp3',
+              'F#4': 'Fs4.mp3',
+              A4: 'A4.mp3',
+              C5: 'C5.mp3',
+              'D#5': 'Ds5.mp3',
+              'F#5': 'Fs5.mp3',
+              A5: 'A5.mp3',
+              C6: 'C6.mp3',
+              'D#6': 'Ds6.mp3',
+              'F#6': 'Fs6.mp3',
+              A6: 'A6.mp3',
+              C7: 'C7.mp3',
+              'D#7': 'Ds7.mp3',
+              'F#7': 'Fs7.mp3',
+              A7: 'A7.mp3',
+              C8: 'C8.mp3',
+            },
+            baseUrl,
+            release: 1.2,
+          })
+          this.sampler.connect(this.limiter)
+        }
+
+        try {
+          await Tone.loaded()
+          this.status = { kind: 'ready', source: 'sampler' }
+          return
+        } catch {
+          // Continue to fallback
+        }
+
+        if (!this.synth) {
+          this.synth = new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: 'triangle' },
+            envelope: { attack: 0.003, decay: 0.2, sustain: 0.08, release: 0.7 },
+          })
+          this.synth.connect(this.limiter)
+        }
+
+        this.status = {
+          kind: 'error',
+          message: 'PCM音源の読み込みに失敗したため、簡易シンセ音にフォールバックしました。',
+          fallbackSource: 'synth',
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        // iOS/Safari ではユーザー操作タイミング次第で Tone.start が失敗することがある。
+        // その場合でも次回の操作で再試行できるよう、最低限のフォールバック音源を用意しておく。
+        if (!this.limiter) {
+          this.limiter = new Tone.Limiter(-6).toDestination()
+        }
+        if (!this.synth) {
+          this.synth = new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: 'triangle' },
+            envelope: { attack: 0.003, decay: 0.2, sustain: 0.08, release: 0.7 },
+          })
+          this.synth.connect(this.limiter)
+        }
+        this.status = { kind: 'error', message: msg, fallbackSource: 'synth' }
+      } finally {
+        this.startingPromise = null
       }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      this.status = { kind: 'error', message: msg }
-    }
+    })()
+
+    await this.startingPromise
   }
 
   async attack(relativeNote: string, transposeSemitones: number): Promise<void> {

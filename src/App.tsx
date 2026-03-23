@@ -74,6 +74,7 @@ function toneNoteNameIfMidiOnVisibleKeyboard(midi: number): string | null {
  */
 const AUDIO_TAIL_SEC = 0.75
 const ADS_RUNTIME_SRC = `${import.meta.env.BASE_URL}ads.runtime.js`
+const KEY_HOLD_SAFETY_MS = 1600
 
 function buildKeyboard(range: { from: number; to: number }): PianoKey[] {
   // MIDI: 既定は C3..C5（VISIBLE_KEYBOARD_MIDI）
@@ -106,6 +107,12 @@ function buildKeyboard(range: { from: number; to: number }): PianoKey[] {
 function App() {
   const engine = useMemo(() => getAudioEngine(), [])
   const [activeNotes, setActiveNotes] = useState<Set<string>>(() => new Set())
+  const activeNotesRef = useRef<Set<string>>(new Set())
+  const [audioReady, setAudioReady] = useState(false)
+  const [audioPriming, setAudioPriming] = useState(false)
+  const primeAudioPromiseRef = useRef<Promise<boolean> | null>(null)
+  const audioReadyAutoOpenedRef = useRef(false)
+  const noteOffSafetyTimersRef = useRef<Map<string, number>>(new Map())
   const [currentKey, setCurrentKey] =
     useState<(typeof KEY_OPTIONS)[number]['id']>('C')
   const [quizInlineText, setQuizInlineText] = useState('')
@@ -132,7 +139,7 @@ function App() {
   >({ kind: 'idle' })
 
   const [view, setView] = useState<'game' | 'user'>('game')
-  const [problemSettingsOpen, setProblemSettingsOpen] = useState(true)
+  const [problemSettingsOpen, setProblemSettingsOpen] = useState(false)
   /** 結果直後だけ true。タブ・設定編集・モード切替で false → 主ボタンは「スタート」 */
   const [resultFreshForAgainStart, setResultFreshForAgainStart] = useState(true)
   const prevQuizModeRef = useRef<QuizMode>('free')
@@ -143,7 +150,7 @@ function App() {
   const chordPickSavedQuestionCountRef = useRef(10)
   const fixedEndSavedQuestionCountRef = useRef(10)
 
-  /** 出題モードタブ: 解答中は同一タブで開閉トグル、別モードへ切替時は開く（折りたたみ後に他モードへ切替なら再オープン） */
+  /** 出題モードタブ: 同一タブ押下で開閉、別モードは展開して切替 */
   const handleModeTabClick = useCallback(
     (next: QuizMode) => {
       if (view === 'user') {
@@ -155,28 +162,28 @@ function App() {
       }
       if (quizState.kind === 'finished') {
         setResultFreshForAgainStart(false)
-        setProblemSettingsOpen(true)
-      } else if (quizState.kind === 'idle') {
-        setProblemSettingsOpen(true)
+      }
+      if (quizMode === next) {
+        setProblemSettingsOpen((v) => !v)
       } else {
-        if (quizMode === next) {
-          setProblemSettingsOpen((v) => !v)
-        } else {
-          setProblemSettingsOpen(true)
-        }
+        setProblemSettingsOpen(true)
       }
       setQuizMode(next)
     },
     [quizState.kind, quizMode, view],
   )
 
-  // タブの折りたたみ状態:
-  // - 初期（idle）は展開固定
-  // - 出題中/リザルト（finished含む）は折りたたみ（必要ならタブ押下で開閉）
+  // 出題終了時は設定を折りたたむ（必要ならタブ押下で開閉）
   useEffect(() => {
-    if (quizState.kind === 'idle') setProblemSettingsOpen(true)
     if (quizState.kind === 'finished') setProblemSettingsOpen(false)
   }, [quizState.kind])
+
+  useEffect(() => {
+    if (!audioReady) return
+    if (audioReadyAutoOpenedRef.current) return
+    audioReadyAutoOpenedRef.current = true
+    setProblemSettingsOpen(true)
+  }, [audioReady])
 
   useEffect(() => {
     if (quizState.kind === 'finished') setResultFreshForAgainStart(true)
@@ -220,6 +227,41 @@ function App() {
   const presentationDoneRef = useRef(false)
   const questionSettledRef = useRef(false)
   const pendingRevealRef = useRef<null | { isCorrect: boolean }>(null)
+
+  // 音声初期化（ユーザー操作起点、重複実行は promise で抑止）。
+  const primeAudio = useCallback(async (): Promise<boolean> => {
+    if (audioReady) return true
+    if (primeAudioPromiseRef.current) return primeAudioPromiseRef.current
+    const run = (async () => {
+    setAudioPriming(true)
+    const nav = navigator as Navigator & {
+      audioSession?: { type: 'auto' | 'ambient' | 'playback' | 'play-and-record' }
+    }
+    if (nav.audioSession && nav.audioSession.type !== 'playback') {
+      try {
+        nav.audioSession.type = 'playback'
+      } catch {
+        // 非対応/制限環境は無視して通常フローを続行。
+      }
+    }
+      try {
+        await engine.ensureReady()
+        const raw = Tone.getContext().rawContext
+        if (raw.state !== 'running') await raw.resume()
+        const ok = raw.state === 'running'
+        setAudioReady(ok)
+        return ok
+      } catch {
+        setAudioReady(false)
+        return false
+      } finally {
+        setAudioPriming(false)
+        primeAudioPromiseRef.current = null
+      }
+    })()
+    primeAudioPromiseRef.current = run
+    return run
+  }, [audioReady, engine])
 
   const clearTimers = useCallback(() => {
     for (const t of pendingTimers.current) window.clearTimeout(t)
@@ -599,6 +641,8 @@ function App() {
 
   const handleStart = useCallback(() => {
     if (!canStart) return
+    if (!audioReady) return
+    setProblemSettingsOpen(false)
 
     // プールは上の useMemo（pool / chordPickPool / fixedEndPool）と同一 — 二重構築しない
     let slice: PoolItem[]
@@ -632,34 +676,83 @@ function App() {
     )
   }, [
     canStart,
+    audioReady,
     quizMode,
     questionCount,
     pool,
     chordPickPool,
     fixedEndPool,
+    setProblemSettingsOpen,
     startCurrentQuestion,
   ])
 
   const noteOn = useCallback(
     async (note: string) => {
+      if (!audioReady) return
       setActiveNotes((prev) => {
         const next = new Set(prev)
         next.add(note)
+        activeNotesRef.current = next
         return next
       })
       await engine.attack(note, transposeSemitones)
+      const existing = noteOffSafetyTimersRef.current.get(note)
+      if (existing !== undefined) window.clearTimeout(existing)
+      const id = window.setTimeout(() => {
+        noteOffSafetyTimersRef.current.delete(note)
+        setActiveNotes((prev) => {
+          const next = new Set(prev)
+          next.delete(note)
+          activeNotesRef.current = next
+          return next
+        })
+        engine.release(note, transposeSemitones)
+      }, KEY_HOLD_SAFETY_MS)
+      noteOffSafetyTimersRef.current.set(note, id)
     },
-    [engine, transposeSemitones],
+    [audioReady, engine, transposeSemitones],
   )
 
   const noteOff = useCallback((note: string) => {
+    const safetyId = noteOffSafetyTimersRef.current.get(note)
+    if (safetyId !== undefined) {
+      window.clearTimeout(safetyId)
+      noteOffSafetyTimersRef.current.delete(note)
+    }
     setActiveNotes((prev) => {
       const next = new Set(prev)
       next.delete(note)
+      activeNotesRef.current = next
       return next
     })
     engine.release(note, transposeSemitones)
   }, [engine, transposeSemitones])
+
+  const releaseAllActiveNotes = useCallback(() => {
+    for (const id of noteOffSafetyTimersRef.current.values()) window.clearTimeout(id)
+    noteOffSafetyTimersRef.current.clear()
+    const notes = Array.from(activeNotesRef.current)
+    for (const n of notes) engine.release(n, transposeSemitones)
+    activeNotesRef.current = new Set()
+    setActiveNotes(new Set())
+  }, [engine, transposeSemitones])
+
+  useEffect(() => {
+    const onGlobalPointerUp = () => releaseAllActiveNotes()
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') releaseAllActiveNotes()
+    }
+    window.addEventListener('pointerup', onGlobalPointerUp)
+    window.addEventListener('pointercancel', onGlobalPointerUp)
+    window.addEventListener('blur', onGlobalPointerUp)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('pointerup', onGlobalPointerUp)
+      window.removeEventListener('pointercancel', onGlobalPointerUp)
+      window.removeEventListener('blur', onGlobalPointerUp)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [releaseAllActiveNotes])
 
   const handleAnswerKey = useCallback(
     (relativeNote: string) => {
@@ -909,10 +1002,9 @@ function App() {
                     type="button"
                     className="startBtn"
                     onClick={() => {
-                      setProblemSettingsOpen(false)
-                      handleStart()
+                      void handleStart()
                     }}
-                    disabled={!canStart}
+                    disabled={!canStart || !audioReady || audioPriming}
                   >
                     {primaryStartLabel}
                   </button>
@@ -926,10 +1018,9 @@ function App() {
                   <button
                     type="button"
                     className="startBtn"
-                    disabled={!canStart}
+                    disabled={!canStart || !audioReady || audioPriming}
                     onClick={() => {
-                      setProblemSettingsOpen(false)
-                      handleStart()
+                      void handleStart()
                     }}
                   >
                     {primaryStartLabel}
@@ -978,6 +1069,8 @@ function App() {
                       noteOff(k.note)
                       handleAnswerKey(k.note)
                     }}
+                    onPointerLeave={() => noteOff(k.note)}
+                    onLostPointerCapture={() => noteOff(k.note)}
                     onPointerCancel={() => noteOff(k.note)}
                   >
                     <span className="srOnly">{k.note}</span>
@@ -1010,12 +1103,28 @@ function App() {
                       noteOff(k.note)
                       handleAnswerKey(k.note)
                     }}
+                    onPointerLeave={() => noteOff(k.note)}
+                    onLostPointerCapture={() => noteOff(k.note)}
                     onPointerCancel={() => noteOff(k.note)}
                   >
                     <span className="srOnly">{k.note}</span>
                   </button>
                 ))}
               </div>
+              {!audioReady && (
+                <div className="keyboardInitOverlay">
+                  <button
+                    type="button"
+                    className="startBtn keyboardInitBtn"
+                    onClick={() => {
+                      void primeAudio()
+                    }}
+                    disabled={audioPriming}
+                  >
+                    {audioPriming ? '音声を初期化中...' : '音声を初期化'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

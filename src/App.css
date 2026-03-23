@@ -681,6 +681,14 @@
   overflow: hidden;
 }
 
+.keyboardInitBtn {
+  min-width: 180px;
+  background: #f3f4f6;
+  color: #111827;
+  border-color: #9ca3af;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
 .filterToggle {
   width: 100%;
   text-align: left;
@@ -1000,6 +1008,17 @@
   width: 100%;
   user-select: none;
   touch-action: none;
+}
+
+.keyboardInitOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  background: rgba(15, 17, 24, 0.7);
+  z-index: 5;
 }
 
 .white-keys {
