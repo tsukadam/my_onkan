@@ -197,6 +197,13 @@
   align-items: center;
 }
 
+.modeTabsRight {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .modeTab {
   font: 14px/1.2 var(--sans);
   padding: var(--mode-tab-pad-y) var(--mode-tab-pad-x);
@@ -323,6 +330,11 @@
 }
 
 .settingsRow:first-of-type {
+  margin-top: 0;
+}
+
+.userSettingsTopActions {
+  justify-content: flex-end;
   margin-top: 0;
 }
 
@@ -1059,5 +1071,18 @@
   .keyboard {
     --white-h: 170px;
     --black-h: 106px;
+  }
+}
+
+/* iOS Safari などの「入力フォーカス時ズーム」を防ぐ定番対応 */
+@media (max-width: 900px) {
+  .keySelect select,
+  .keySelect input,
+  .editorBody textarea,
+  input[type='text'],
+  input[type='number'],
+  textarea,
+  select {
+    font-size: 16px !important;
   }
 }

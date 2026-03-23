@@ -132,6 +132,7 @@ function App() {
   >({ kind: 'idle' })
 
   const [view, setView] = useState<'game' | 'user'>('game')
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [problemSettingsOpen, setProblemSettingsOpen] = useState(true)
   /** 結果直後だけ true。タブ・設定編集・モード切替で false → 主ボタンは「スタート」 */
   const [resultFreshForAgainStart, setResultFreshForAgainStart] = useState(true)
@@ -174,6 +175,15 @@ function App() {
   useEffect(() => {
     if (quizState.kind === 'finished') setResultFreshForAgainStart(true)
   }, [quizState.kind])
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    onFullscreenChange()
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
 
   const [cycleQueue, setCycleQueue] = useState<number[]>([])
   const [presentCount, setPresentCount] = useState(0)
@@ -741,29 +751,41 @@ function App() {
     ],
   )
 
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      void document.documentElement.requestFullscreen().catch(() => {})
+      return
+    }
+    void document.exitFullscreen().catch(() => {})
+  }, [])
+
   return (
     <div className={`app ${view === 'user' ? 'viewUser' : ''}`}>
-      <header className="header">
-        <div className="title">
-          <h1>MyOnkan</h1>
-        </div>
-        <div className="headerBtns">
-          <button
-            type="button"
-            className={`gearBtn${view === 'user' ? ' gearBtnOn' : ''}`}
-            onClick={() => setView((v) => (v === 'user' ? 'game' : 'user'))}
-            aria-label="設定"
-            aria-pressed={view === 'user'}
-            title="設定"
-          >
-            ⚙
-          </button>
-        </div>
-      </header>
-
       <main className="main">
         <section className="panel">
           <div className="userSettingsPanel">
+            <div className="settingsRow userSettingsTopActions">
+              <button
+                type="button"
+                className={`gearBtn${isFullscreen ? ' gearBtnOn' : ''}`}
+                onClick={toggleFullscreen}
+                aria-label={isFullscreen ? '全画面解除' : '全画面表示'}
+                aria-pressed={isFullscreen}
+                title={isFullscreen ? '全画面解除' : '全画面表示'}
+              >
+                ⛶
+              </button>
+              <button
+                type="button"
+                className="gearBtn gearBtnOn"
+                onClick={() => setView('game')}
+                aria-label="設定を閉じる"
+                aria-pressed
+                title="設定を閉じる"
+              >
+                ⚙
+              </button>
+            </div>
             <div className="settingsRow">
               <label className="keySelect">
                 <span>キー</span>
@@ -856,6 +878,28 @@ function App() {
               >
                 構成音から生成
               </button>
+              <div className="modeTabsRight">
+                <button
+                  type="button"
+                  className={`gearBtn${isFullscreen ? ' gearBtnOn' : ''}`}
+                  onClick={toggleFullscreen}
+                  aria-label={isFullscreen ? '全画面解除' : '全画面表示'}
+                  aria-pressed={isFullscreen}
+                  title={isFullscreen ? '全画面解除' : '全画面表示'}
+                >
+                  ⛶
+                </button>
+                <button
+                  type="button"
+                  className={`gearBtn${view === 'user' ? ' gearBtnOn' : ''}`}
+                  onClick={() => setView((v) => (v === 'user' ? 'game' : 'user'))}
+                  aria-label="設定"
+                  aria-pressed={view === 'user'}
+                  title="設定"
+                >
+                  ⚙
+                </button>
+              </div>
             </div>
 
             {problemSettingsOpen && (
@@ -1090,9 +1134,9 @@ function App() {
         </section>
         <div id="ad-footer-slot" className="footerAdSlot" />
         <div className="footerLinks">
-          <a href="https://aramugi.com" target="_blank" rel="noreferrer">
-            あらむぎ
-          </a>
+          <span>MyOnkan 相対音感練習</span>
+          <span>　</span>
+          <span><a href="https://aramugi.com" target="_blank" rel="noreferrer">制作者ホームページ</a></span>
           <span> / </span>
           <a href="https://github.com/tsukadam/my_onkan" target="_blank" rel="noreferrer">
             GitHub
