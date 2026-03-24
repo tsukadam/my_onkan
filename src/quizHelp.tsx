@@ -41,7 +41,10 @@ export const USER_SETTINGS_HELP_TEXT =
   '鍵盤外の音は表示されません。\n' +
   '同名音はどのオクターブで回答しても正解になります。\n' +
   '\n' +
-  'PWA対応しています。スマホでブラウザUIが邪魔な時に。'
+  'PWA対応しています。スマホでブラウザUIが邪魔な時に。\n' +
+  'PWAでは広告を出さないようになっています。\n' +
+  '\n' +
+  'テキスト編集でいちいち拡大される場合、ブラウザ側でページの拡大率が100%以外になっている時があります。'
 
 export type QuizHelpMode = keyof typeof QUIZ_HELP_MODE_SPECIFIC
 

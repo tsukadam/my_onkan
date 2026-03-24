@@ -1140,16 +1140,30 @@
   }
 }
 
-/* iOS Safari などの「入力フォーカス時ズーム」を防ぐ定番対応 */
-@media (hover: none) and (pointer: coarse) {
-  .keySelect select,
-  .keySelect input,
-  .editorBody textarea,
-  input[type='text'],
-  input[type='number'],
-  textarea,
-  select {
-    font-size: 16px !important;
+/*
+ * iOS / iPadOS WebKit 向け: 入力フォーカス時の自動ズームは「computed font-size が小さい」と起きやすい
+ * （しきい値は長らく 16px 前後の CSS px と言われる）。16px 指定でも `font` 一括や詳細度で負けることがあるので、
+ * 狭い画面かつ WebKit 系にだけ `font` 全体を 17px で最終上書きする。
+ * Safari と Chrome(iOS) の「同じなのに文字が違って見える」は OS のテキストサイズ・Safari のページ拡大などが典型。
+ * 調査メモ: docs/safari-ios-text-zoom-notes.md
+ */
+@media (max-width: 1024px) {
+  @supports (-webkit-touch-callout: none) {
+    textarea,
+    input.stepInput {
+      font: 17px/1.35 var(--mono) !important;
+    }
+    select,
+    input[type='text'],
+    input[type='search'],
+    input[type='number']:not(.stepInput),
+    input[type='email'],
+    input[type='tel'],
+    input[type='url'],
+    input[type='password'],
+    input[type='date'],
+    input[type='time'] {
+      font: 17px/1.2 var(--sans) !important;
+    }
   }
 }
-

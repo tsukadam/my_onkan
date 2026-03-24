@@ -1200,7 +1200,13 @@ function App() {
           )}
 
         </section>
-        <div id="ad-footer-slot" className="footerAdSlot" />
+        <div
+          id="ad-footer-slot"
+          className="footerAdSlot"
+          {...(import.meta.env.VITE_ADS_HIDE_IN_STANDALONE === 'true'
+            ? { 'data-ads-hide-standalone': 'true' as const }
+            : {})}
+        />
         <div className="footerLinks">
           <span>MyOnkan 相対音感練習</span>
           <span>　　　</span>

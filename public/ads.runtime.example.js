@@ -3,11 +3,37 @@
   1) このファイルを参考に、同じ場所に public/ads.runtime.js を作る（git 管理外）
   2) 本番サーバーへ ads.runtime.js を一緒に配置する
   3) App.tsx の #ad-footer-slot に広告を描画する
+
+  既定は PWA（スタンドアロン）では広告を出さない。
+  PWA でも広告を出すには MYONKAN_ADS_HIDE_IN_STANDALONE = false、または
+  window.MYONKAN_ADS_CONFIG = { hideInStandalone: false } を ads 読込前に置く。
 */
 
 (function () {
+  var MYONKAN_ADS_HIDE_IN_STANDALONE = true
+
+  function isStandaloneDisplay() {
+    try {
+      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true
+      if (window.matchMedia && window.matchMedia('(display-mode: minimal-ui)').matches) return true
+      if (window.navigator.standalone === true) return true
+    } catch (e) {}
+    return false
+  }
+
   var slot = document.getElementById('ad-footer-slot')
   if (!slot) return
+
+  var cfg = window.MYONKAN_ADS_CONFIG || {}
+  var dataHide = slot.getAttribute('data-ads-hide-standalone') === 'true'
+  var hideStandalone =
+    (typeof cfg.hideInStandalone === 'boolean' ? cfg.hideInStandalone : MYONKAN_ADS_HIDE_IN_STANDALONE) ||
+    dataHide
+  if (hideStandalone && isStandaloneDisplay()) {
+    slot.style.display = 'none'
+    return
+  }
+
   slot.classList.remove('hasAd')
 
   // 表示時に viewport 幅 - 20px（左右10px）で固定幅化

@@ -23,3 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 public/ads.runtime.js
+# 運用者ローカルのみ（ビルド時メタ description に使用）
+seo-description.txt

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="256" y1="0" x2="256" y2="512" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2e3444"/>
+      <stop offset="1" stop-color="#12131a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g transform="translate(256 256) scale(9.5) translate(-24 -24)">
+    <defs>
+      <linearGradient id="keyFill" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+        <stop stop-color="#ffffff"/>
+        <stop offset="1" stop-color="#dad5e8"/>
+      </linearGradient>
+      <mask id="holes" maskUnits="userSpaceOnUse">
+        <rect width="48" height="48" fill="white"/>
+        <path fill="black" d="M10.595 10L15.595 10 15.595 25A1 1 0 0 1 14.595 26L11.595 26A1 1 0 0 1 10.595 25L10.595 10Z"/>
+        <path fill="black" d="M17.865 10L22.865 10 22.865 25A1 1 0 0 1 21.865 26L18.865 26A1 1 0 0 1 17.865 25L17.865 10Z"/>
+        <path fill="black" d="M32.405 10L37.405 10 37.405 25A1 1 0 0 1 36.405 26L33.405 26A1 1 0 0 1 32.405 25L32.405 10Z"/>
+      </mask>
+    </defs>
+    <g mask="url(#holes)">
+      <path fill="url(#keyFill)" d="M8.5 10L12.77 10 12.77 37.5A0.5 0.5 0 0 1 12.27 38L8.5 38A2.35 2.35 0 0 1 6.15 35.65V12.35A2.35 2.35 0 0 1 8.5 10Z"/>
+      <path fill="url(#keyFill)" d="M13.42 10H20.04V37.5A0.5 0.5 0 0 1 19.54 38H13.92A0.5 0.5 0 0 1 13.42 37.5V10Z"/>
+      <path fill="url(#keyFill)" d="M20.69 10H27.31V37.5A0.5 0.5 0 0 1 26.81 38H21.19A0.5 0.5 0 0 1 20.69 37.5V10Z"/>
+      <path fill="url(#keyFill)" d="M27.96 10H34.58V37.5A0.5 0.5 0 0 1 34.08 38H28.46A0.5 0.5 0 0 1 27.96 37.5V10Z"/>
+      <path fill="url(#keyFill)" d="M35.23 10H39.48A2.35 2.35 0 0 1 41.85 12.35V35.65A2.35 2.35 0 0 1 39.48 38H35.73A0.5 0.5 0 0 1 35.23 37.5V10Z"/>
+    </g>
+  </g>
+</svg>

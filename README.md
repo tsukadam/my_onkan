@@ -81,6 +81,19 @@ build-onkan.bat
 
 `public/ads.runtime.js` を用意してビルドすると、`dist/ads.runtime.js` として出力されます。
 
+### PWA と広告（既定）
+
+**既定では、PWA（スタンドアロン表示）のとき広告枠は出しません。**  
+`ads.runtime.js` 内の `MYONKAN_ADS_HIDE_IN_STANDALONE` が `true` のためです。
+
+PWA でも広告を出したい場合:
+
+1. `MYONKAN_ADS_HIDE_IN_STANDALONE` を `false` にする、または
+2. `ads.runtime.js` より前に  
+   `window.MYONKAN_ADS_CONFIG = { hideInStandalone: false }` を置く
+
+ブラウザ表示では従来どおり広告を読み込みます（AdSense を配置している場合）。
+
 ## ライセンス
 
 [MIT](./LICENSE)

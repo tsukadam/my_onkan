@@ -1,0 +1,55 @@
+This file lists third-party materials used by MyOnkan. The project LICENSE
+file applies only to original work in this repository.
+
+Verbatim license texts for npm packages live under node_modules/<package>/LICENSE
+(or LICENSE.md) after npm install. Production JS bundles in dist/ usually do not
+embed those full texts; this NOTICE is the project’s consolidated attribution.
+
+-------------------------------------------------------------------------------
+Runtime dependencies (included in production JavaScript bundles)
+-------------------------------------------------------------------------------
+
+react (https://github.com/facebook/react)
+  MIT License
+  Copyright (c) Meta Platforms, Inc. and affiliates.
+
+react-dom (https://github.com/facebook/react)
+  MIT License
+  Copyright (c) Meta Platforms, Inc. and affiliates.
+
+tone / Tone.js (https://github.com/Tonejs/Tone.js)
+  MIT License
+  Copyright (c) 2014-2020 Yotam Mann
+
+-------------------------------------------------------------------------------
+Runtime audio (loaded over the network; not stored in this repository)
+-------------------------------------------------------------------------------
+
+Salamander Grand Piano (MP3 samples)
+  Fetched at runtime from: https://tonejs.github.io/audio/salamander/
+  License: Creative Commons Attribution 3.0 (CC BY 3.0)
+  Attribution to the original sample pack is required when using these
+  recordings. See: https://github.com/sfzinstruments/SalamanderGrandPiano
+
+-------------------------------------------------------------------------------
+Development / build-only tools (not sent to browsers; shipped with repo source)
+-------------------------------------------------------------------------------
+
+vite (https://github.com/vitejs/vite) — MIT — Copyright VoidZero Inc. and
+  Vite contributors
+
+@vitejs/plugin-react — MIT
+
+typescript — Apache License 2.0
+
+eslint, @eslint/js, eslint-plugin-react-hooks, eslint-plugin-react-refresh,
+globals, typescript-eslint — MIT (see each package in node_modules)
+
+@types/node, @types/react, @types/react-dom — MIT
+
+-------------------------------------------------------------------------------
+UI
+-------------------------------------------------------------------------------
+
+The on-screen piano keyboard is drawn with CSS and React (no separate keyboard
+image file).
