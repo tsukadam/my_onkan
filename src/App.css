@@ -107,6 +107,26 @@
   outline-offset: 2px;
 }
 
+/* テキスト入力と分離: range に code-bg / 枠線を付けない */
+.keySelect input[type='range'] {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+  min-width: 100px;
+}
+
+@media (min-width: 480px) {
+  .keySelect input[type='range'] {
+    min-width: 100px;
+  }
+
+  .keySelect input[type='range'].chordPickCountBar {
+    min-width: 48px;
+  }
+}
+
 .main {
   display: grid;
   place-items: start center;
@@ -358,6 +378,7 @@
 .check input {
   width: 16px;
   height: 16px;
+  accent-color: var(--control-accent);
 }
 
 .settingsRow:first-of-type {
@@ -393,7 +414,7 @@
 }
 
 .countBar:focus-visible {
-  outline: 2px solid var(--accent-border);
+  outline: 2px solid var(--control-accent);
   outline-offset: 2px;
 }
 
@@ -408,8 +429,8 @@
   border-radius: 999px;
   background: linear-gradient(
     to right,
-    var(--accent) 0,
-    var(--accent) var(--range-p, 0%),
+    var(--control-accent) 0,
+    var(--control-accent) var(--range-p, 0%),
     var(--border) var(--range-p, 0%),
     var(--border) 100%
   );
@@ -423,12 +444,12 @@
   margin-top: calc((var(--range-track-h) - var(--range-thumb)) / 2);
   box-sizing: border-box;
   border-radius: 50%;
-  border: 2px solid var(--accent);
-  background: var(--bg);
+  border: none;
+  background: #fff;
 }
 
 .countBar:disabled::-webkit-slider-thumb {
-  border-color: var(--text);
+  background: #fff;
 }
 
 /* Firefox: progress はエンジンがつまみと同期。トラックは未塗り部 */
@@ -441,20 +462,20 @@
 .countBar::-moz-range-progress {
   height: var(--range-track-h);
   border-radius: 999px 0 0 999px;
-  background: var(--accent);
+  background: var(--control-accent);
 }
 
 .countBar::-moz-range-thumb {
   width: var(--range-thumb);
   height: var(--range-thumb);
   box-sizing: border-box;
-  border: 2px solid var(--accent);
+  border: none;
   border-radius: 50%;
-  background: var(--bg);
+  background: #fff;
 }
 
 .countBar:disabled::-moz-range-thumb {
-  border-color: var(--text);
+  background: #fff;
 }
 
 .countLabel {
