@@ -1,4 +1,5 @@
 import { QuizModeHelpPanel, UI_PLACEHOLDERS } from './quizHelp'
+import { rangeSliderVars } from './rangeSliderStyle'
 
 type Props = {
   text: string
@@ -20,6 +21,8 @@ export function ChordPickQuizSettings({
   helpOpen,
   onHelpOpenToggle,
 }: Props) {
+  const qMax = Math.max(1, poolSize)
+  const qVal = poolSize === 0 ? 1 : Math.min(questionCount, poolSize)
   return (
     <>
       <div className="quizTextBlock">
@@ -40,8 +43,9 @@ export function ChordPickQuizSettings({
             type="range"
             className="chordPickCountBar countBar"
             min={1}
-            max={Math.max(1, poolSize)}
-            value={poolSize === 0 ? 1 : Math.min(questionCount, poolSize)}
+            max={qMax}
+            value={qVal}
+            style={rangeSliderVars(1, qMax, qVal)}
             onChange={(e) =>
               onQuestionCountChange(Math.min(poolSize, Math.max(1, Number(e.target.value))))
             }

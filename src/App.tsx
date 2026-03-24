@@ -13,6 +13,7 @@ import { FreeQuizSettings } from './FreeQuizSettings'
 import { KEYBOARD_MIDI_MAX, KEYBOARD_MIDI_MIN } from './problem/noteTokens'
 import { USER_SETTINGS_HELP_TEXT } from './quizHelp'
 import { loadUserSettings, saveUserSettings, type UserSettingsStore } from './db/userSettings'
+import { rangeSliderVars } from './rangeSliderStyle'
 import './App.css'
 
 type QuizMode = 'free' | 'fixedEnd' | 'chordPick'
@@ -875,6 +876,7 @@ function App() {
                   max={5}
                   step={1}
                   value={questionIntervalSec}
+                  style={rangeSliderVars(2, 5, questionIntervalSec)}
                   onChange={(e) => setQuestionIntervalSec(Number(e.target.value) as 2 | 3 | 4 | 5)}
                 />
                 <span className="countLabel">{questionIntervalSec}秒</span>
@@ -890,6 +892,7 @@ function App() {
                   max={120}
                   step={10}
                   value={tempoBpm}
+                  style={rangeSliderVars(50, 120, tempoBpm)}
                   onChange={(e) =>
                     setTempoBpm(
                       Number(e.target.value) as

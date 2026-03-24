@@ -379,11 +379,79 @@
 .countBar {
   width: 160px;
   min-width: 100px;
+  /* ネイティブの「塗り」とつまみはエンジン依存でズレやすいので、トラック＋つまみを統一 */
+  --range-track-h: 6px;
+  --range-thumb: 16px;
+  height: var(--range-thumb);
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.countBar:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
 }
 
 .countBar:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Chromium / Safari: 塗りは JS で渡した --range-p（値に連動） */
+.countBar::-webkit-slider-runnable-track {
+  height: var(--range-track-h);
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0,
+    var(--accent) var(--range-p, 0%),
+    var(--border) var(--range-p, 0%),
+    var(--border) 100%
+  );
+}
+
+.countBar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--range-thumb);
+  height: var(--range-thumb);
+  margin-top: calc((var(--range-track-h) - var(--range-thumb)) / 2);
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: var(--bg);
+}
+
+.countBar:disabled::-webkit-slider-thumb {
+  border-color: var(--text);
+}
+
+/* Firefox: progress はエンジンがつまみと同期。トラックは未塗り部 */
+.countBar::-moz-range-track {
+  height: var(--range-track-h);
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.countBar::-moz-range-progress {
+  height: var(--range-track-h);
+  border-radius: 999px 0 0 999px;
+  background: var(--accent);
+}
+
+.countBar::-moz-range-thumb {
+  width: var(--range-thumb);
+  height: var(--range-thumb);
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--bg);
+}
+
+.countBar:disabled::-moz-range-thumb {
+  border-color: var(--text);
 }
 
 .countLabel {
