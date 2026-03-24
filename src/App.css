@@ -61,6 +61,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  margin-bottom: 5px;
   font-size: 14px;
   color: var(--text-h);
 }
@@ -350,6 +351,7 @@
   align-items: center;
   gap: 8px;
   font-size: 14px;
+  margin-bottom: 5px;
   color: var(--text-h);
 }
 
@@ -374,6 +376,7 @@
 .userSliderLabel {
   width: 100%;
   min-width: 0;
+  margin: 5px 0px;
 }
 
 .countBar {
@@ -481,11 +484,13 @@
   white-space: nowrap;
 }
 
+/* 横方向の「余白」は多くがここの margin ではなく、親 .chordPickCountLabel の gap */
 .chordPickCountBar {
   flex: 1 1 auto;
   min-width: 48px;
   width: auto !important;
   max-width: 100%;
+  margin: 0;
 }
 
 .chordPickCountSlash {
@@ -846,10 +851,16 @@
 }
 
 .questionCountRow .questionCountLabel {
+  margin: 5px 0px;
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+/* 上は .questionCountLabel が JSX に無く当たらない。.chordPickCountRow 側の flex/gap は維持しつつ余白だけ */
+.questionCountRow.chordPickCountRow .chordPickCountLabel {
+  margin: 5px 0px;
 }
 
 /* 構成音から生成: 「出題数」〜「/ N問」を1行に */
